@@ -155,16 +155,19 @@ private actor SamplingWorker {
         return Reading(snapshot: snapshot, historyError: historyError, activity: history?.activity ?? [])
     }
 
-    func stop() {
+    func stop() -> String? {
         defer {
             history = nil
             historyStore = nil
         }
+        guard let history else { return historyError }
         do {
-            try history?.stop()
+            try history.stop()
+            historyError = nil
         } catch {
             reportHistoryError(error)
         }
+        return historyError
     }
 
     func historyReport() throws -> CPUHistoryReport {
@@ -284,7 +287,8 @@ final class MonitorModel: ObservableObject {
                     break
                 }
             }
-            await worker.stop()
+            let finalHistoryError = await worker.stop()
+            self?.historyError = finalHistoryError
         }
     }
 

@@ -227,7 +227,7 @@ struct CPUHistoryStore {
 
 final class CPUHistoryRecorder {
     private let store: CPUHistoryStore
-    private static let batteryCheckpointSeconds: TimeInterval = 30
+    private static let checkpointSeconds: TimeInterval = 30
     private var lock: CPUHistoryStore.WriterLock?
     private var tracker: HighCPUTracker
     private var forensics: ForensicsTracker
@@ -235,7 +235,8 @@ final class CPUHistoryRecorder {
     private var events: [HighCPUEvent]
     private var dirty = false
     private var batteryDirty = false
-    private var nextBatteryCheckpoint: Date?
+    private var needsImmediateWrite = false
+    private var nextCheckpoint: Date?
     private var nextExpiration: Date?
 
     fileprivate init(store: CPUHistoryStore, lock: CPUHistoryStore.WriterLock,
@@ -268,28 +269,37 @@ final class CPUHistoryRecorder {
         }
         events[index].ignoredAt = ignored ? now : nil
         dirty = true
-        try commit([], now: now, lock: lock)
+        try commit([], now: now, lock: lock, flush: true)
     }
 
     func stop(now: Date = Date()) throws {
         guard let lock else { return }
         defer { self.lock = nil }
         let updates = forensics.stop(events: tracker.endAll(.monitorStopped), at: now)
-        try commit(updates, now: now, lock: lock, flushBattery: true)
+        try commit(updates, now: now, lock: lock, flush: true)
     }
 
     private func commit(_ updates: [HighCPUEvent], now: Date, lock: CPUHistoryStore.WriterLock,
-                        flushBattery: Bool = false) throws {
+                        flush: Bool = false) throws {
         if !updates.isEmpty {
             var changed = Dictionary(updates.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
-            for event in events where changed[event.id] != nil {
-                changed[event.id]?.ignoredAt = event.ignoredAt
+            var existingUpdates = 0
+            for event in events {
+                guard var update = changed[event.id] else { continue }
+                existingUpdates += 1
+                if (event.endReason == nil && update.endReason != nil)
+                    || (event.forensics?.afterComplete != true && update.forensics?.afterComplete == true) {
+                    needsImmediateWrite = true
+                }
+                update.ignoredAt = event.ignoredAt
+                changed[event.id] = update
             }
+            if changed.count > existingUpdates { needsImmediateWrite = true }
             events.removeAll { changed[$0.id] != nil }
             events.append(contentsOf: changed.values)
             dirty = true
         }
-        if dirty || (nextExpiration.map { $0 <= now } ?? false) {
+        if !updates.isEmpty || (nextExpiration.map { $0 <= now } ?? false) {
             let bounded = store.bounded(events, now: now)
             if bounded != events {
                 events = bounded
@@ -297,15 +307,15 @@ final class CPUHistoryRecorder {
             }
             nextExpiration = events.last?.lastObservedAt.addingTimeInterval(Double(store.policy.retentionSeconds))
         }
-        let untilCheckpoint = nextBatteryCheckpoint?.timeIntervalSince(now) ?? 0
-        let batteryDue = batteryDirty && (flushBattery || untilCheckpoint <= 0
-                                          || untilCheckpoint > Self.batteryCheckpointSeconds)
-        guard dirty || batteryDue else { return }
+        guard dirty || batteryDirty else { return }
+        if flush { needsImmediateWrite = true }
+        let untilCheckpoint = nextCheckpoint?.timeIntervalSince(now) ?? 0
+        guard needsImmediateWrite || untilCheckpoint <= 0 || untilCheckpoint > Self.checkpointSeconds else { return }
         try store.write(.init(events: events, batteryDay: battery.day), lock: lock)
+        // A failed write keeps its urgency so the next scan can retry an event boundary.
+        needsImmediateWrite = false
         dirty = false
-        if batteryDirty {
-            batteryDirty = false
-            nextBatteryCheckpoint = now.addingTimeInterval(Self.batteryCheckpointSeconds)
-        }
+        batteryDirty = false
+        nextCheckpoint = now.addingTimeInterval(Self.checkpointSeconds)
     }
 }

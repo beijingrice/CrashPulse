@@ -215,19 +215,54 @@ final class CPUHistoryTests: XCTestCase {
     func testDiskFailureLeavesPendingEventsForRetry() throws {
         let store = try fixtureStore()
         let recorder = try store.startRecording(intervalSeconds: 5, now: at(0))
-        for end in stride(from: 5, to: 30, by: 5) {
+        try recorder.ingest(snapshot(0, rows: [], supply: .battery))
+        let first = sample(from: 0, to: 5, energyNanojoules: 36_000_000_000)
+        try recorder.ingest(snapshot(5, rows: [first], supply: .battery))
+        for end in stride(from: 10, to: 30, by: 5) {
             try recorder.ingest(snapshot(end, rows: [sample(from: end - 5, to: end)]))
         }
         // A directory in the destination slot makes atomic replacement fail
         // without changing the writer lock or requiring elevated permissions.
+        let saved = store.fileURL.appendingPathExtension("saved")
+        try FileManager.default.moveItem(at: store.fileURL, to: saved)
         try FileManager.default.createDirectory(at: store.fileURL, withIntermediateDirectories: false)
         XCTAssertThrowsError(try recorder.ingest(snapshot(30, rows: [sample(from: 25, to: 30)])))
         try FileManager.default.removeItem(at: store.fileURL)
+        try FileManager.default.moveItem(at: saved, to: store.fileURL)
+        try recorder.ingest(snapshot(31, rows: [sample(from: 30, to: 31)]))
+        XCTAssertEqual(try store.report(now: at(31)).events.first?.observedDurationSeconds, 31)
         try recorder.ingest(snapshot(35, rows: []))
         let event = try XCTUnwrap(store.report(now: at(35)).events.first)
         XCTAssertEqual(event.endReason, .processMissing)
-        XCTAssertEqual(event.observedDurationSeconds, 30)
+        XCTAssertEqual(event.observedDurationSeconds, 31)
         try recorder.stop(now: at(35))
+    }
+
+    func testActiveHistoryBatchesWritesAndSavesEventBoundariesImmediately() throws {
+        let store = try fixtureStore()
+        let recorder = try store.startRecording(intervalSeconds: 5, now: at(0))
+        try qualify(recorder)
+        XCTAssertEqual(try store.report(now: at(30)).events.first?.observedDurationSeconds, 30)
+        for end in stride(from: 35, through: 65, by: 5) {
+            try recorder.ingest(snapshot(end, rows: [sample(from: end - 5, to: end)]))
+            XCTAssertEqual(recorder.report(now: at(Double(end))).events.first?.observedDurationSeconds, Double(end))
+            let expectedCheckpoint: Double = end < 60 ? 30 : 60
+            XCTAssertEqual(try store.report(now: at(Double(end))).events.first?.observedDurationSeconds, expectedCheckpoint)
+        }
+
+        try recorder.ingest(snapshot(70, rows: []))
+        let ended = try XCTUnwrap(store.report(now: at(70)).events.first)
+        XCTAssertEqual(ended.observedDurationSeconds, 65)
+        XCTAssertEqual(ended.endReason, .processMissing)
+        XCTAssertEqual(ended.forensics?.afterComplete, false)
+        for end in [75, 80, 85] {
+            let observer = sample(from: end - 5, to: end, cpu: 5, pid: 40)
+            try recorder.ingest(snapshot(end, rows: [observer]))
+            XCTAssertEqual(try store.report(now: at(Double(end))).events.first?.forensics?.afterComplete, end == 85)
+        }
+        try recorder.setIgnored(true, id: ended.id, now: at(86))
+        XCTAssertEqual(try store.report(now: at(86)).events.first?.ignoredAt, at(86))
+        try recorder.stop(now: at(87))
     }
 
     func testUnsupportedHistoryIsNeverOverwritten() throws {

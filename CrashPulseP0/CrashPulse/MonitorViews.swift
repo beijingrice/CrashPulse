@@ -46,6 +46,15 @@ struct MenuMonitorView: View {
             header
                 .padding(.horizontal, 16)
                 .padding(.vertical, 14)
+            if let error = model.historyError {
+                Label("History could not be saved.", systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 12)
+                    .help(error)
+            }
             if model.run.canRecordHistory {
                 Picker("View", selection: $section) {
                     Text(Section.history.rawValue).tag(Section.history)

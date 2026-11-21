@@ -48,6 +48,7 @@ runner=.build/xcode/Build/Products/Debug/CrashPulseOff.app/Contents/MacOS/CrashP
 - The three leading processes are ranked by observed CPU core-seconds within the event. Their share uses all measured process CPU in that window. The likely app is ranked separately using the increase over its comparable pre-event CPU baseline or verified process starts near onset. With limited baseline evidence, the ranking uses observed CPU. The report shows estimated extra CPU energy only for comparable measured windows. It identifies likely contributors and foreground context. The original in-app task remains unknown when sampling cannot identify it.
 - Live and event attribution group real executable paths under the outermost app bundle, so nested helpers roll up to their host app. Standalone executables are shown separately. Processes without an available path remain separate. Impact labels use duration, relative CPU increase, estimated excess CPU energy where available, and foreground context. Recurring background activity requires repeated observed events on separate days. The app offers suggestions and a reversible Ignore action. It does not stop or modify processes.
 - The journal lives in `~/Library/Application Support/CrashPulse/cpu-history.json`. Data stays on the Mac. The store keeps at most 512 events whose last observation falls in the past seven days. Cleanup runs during monitoring and when the next reader or writer opens the history. The file is updated atomically, and one recorder owns a journal at a time. Concurrent `--history` readers can view the latest complete write. After an unexpected recorder exit, the next reader or writer closes active records as `monitorInterrupted` without adding elapsed time. If the journal or some of its records cannot be decoded, the next writer keeps the readable records, moves the original file aside as `cpu-history.damaged-<time>-<id>.json` in the same directory, and continues recording. A journal written by a newer schema version is left untouched and recording stops with an error.
+- Ordinary event and battery updates share a 30-second checkpoint. Event detection, event end, completed follow-up, Ignore or Restore, and a normal stop save pending updates immediately. An unexpected exit can lose the ongoing updates since the last successful checkpoint. The menu panel shows a warning if history cannot be saved.
 
 To run the end-to-end test, pass the signed app and a new output directory. It uses 44 seconds of bounded CPU load. It checks the process name and PID, event duration, measured CPU energy in Wh, contribution ranking, timeline coverage, and persistence after the fixture exits and the recorder restarts.
 
@@ -59,6 +60,13 @@ To verify app-level detection, run the four-helper fixture. It checks that each 
 
 ```sh
 Scripts/test-app-trigger.zsh .build/xcode/Build/Products/Debug/CrashPulseOff.app ".build/app-trigger-test-$(date +%Y%m%d-%H%M%S)"
+```
+
+To measure default-interval memory, CPU time, and logical journal writes, run the 220-second benchmark. Supply a raw `cpu-history.json` from the standalone history test as the seed. The benchmark copies one complete event into 500 test records, adds one malformed record, and verifies recovery and persistence of a new event after a 60-second load. It writes metrics and test history to its own directory.
+
+```sh
+xcrun python3 Scripts/benchmark-history.py .build/xcode/Build/Products/Release/CrashPulseOff.app \
+  .build/history-test-example/history/cpu-history.json ".build/history-benchmark-$(date +%Y%m%d-%H%M%S)"
 ```
 
 ## Verify App Sandbox
@@ -114,7 +122,7 @@ These readings cover CPU energy attributed to the process. GPU, the display, cha
 
 The battery ranking in **Overview** uses the Mac's local date. It counts verified intervals between consecutive scans that both started and ended on battery, discarding observed supply transitions, long gaps, sleep discontinuities, and samples that cross midnight. Processes whose executable paths are inside the same outermost app bundle share a row, including nested helpers. Standalone executables have their own row. Processes without a usable path are grouped as unidentified. Percentages are shares of measured process CPU energy during tracked battery time. Brief supply changes between polls may go unobserved.
 
-The panel updates from the current recorder while it is open. The local journal checkpoints battery usage every 30 seconds and flushes on a normal stop. The ranking still shows that day's recorded battery use after reconnecting power or restarting CrashPulse. A new day starts a new total.
+The panel updates from the current recorder while it is open. The ranking still shows that day's recorded battery use after reconnecting power or restarting CrashPulse. A new day starts a new total.
 
 The history export (schema 4) includes `observedCPUEnergyWattHours`, time covered by energy readings, optional `forensics` evidence, `recurringBackgroundActivity`, and an optional `batteryToday` section. App events include `triggerApp` and may flag `incompleteAppSamples`. Earlier on-disk schema versions are upgraded automatically. Live diagnostics (schema 2) include power supply and per-process `cpuPower` with `watts` and `intervalWattHours`.
 
