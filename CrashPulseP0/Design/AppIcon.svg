@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- CrashPulse app icon. A calm CPU trace rises into a sustained plateau inside a tinted
+       event span, then settles: the same story the event detail chart tells.
+       Layout follows the macOS icon grid: an 824 pt rounded square inset 100 pt. -->
+  <defs>
+    <linearGradient id="face" x1="0" y1="100" x2="0" y2="924" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FDFEFF"/>
+      <stop offset="1" stop-color="#E2E7EE"/>
+    </linearGradient>
+    <linearGradient id="rim" x1="0" y1="100" x2="0" y2="924" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.9"/>
+      <stop offset="1" stop-color="#B9C2CF" stop-opacity="0.6"/>
+    </linearGradient>
+    <linearGradient id="trace" x1="180" y1="0" x2="844" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#8590A3"/>
+      <stop offset="0.33" stop-color="#8590A3"/>
+      <stop offset="0.42" stop-color="#FF8A00"/>
+      <stop offset="0.62" stop-color="#FF3B30"/>
+      <stop offset="0.86" stop-color="#FF3B30"/>
+      <stop offset="0.92" stop-color="#8590A3"/>
+      <stop offset="1" stop-color="#8590A3"/>
+    </linearGradient>
+    <linearGradient id="span" x1="0" y1="250" x2="0" y2="750" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FF3B30" stop-opacity="0.16"/>
+      <stop offset="1" stop-color="#FF3B30" stop-opacity="0.05"/>
+    </linearGradient>
+    <filter id="shadow" x="0" y="0" width="1024" height="1024" filterUnits="userSpaceOnUse">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="14"/>
+      <feOffset dy="12" result="blur"/>
+      <feComponentTransfer><feFuncA type="linear" slope="0.28"/></feComponentTransfer>
+      <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="traceShadow" x="0" y="0" width="1024" height="1024" filterUnits="userSpaceOnUse">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="10"/>
+      <feOffset dy="10"/>
+      <feComponentTransfer><feFuncA type="linear" slope="0.18"/></feComponentTransfer>
+      <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <clipPath id="body"><rect x="100" y="100" width="824" height="824" rx="185"/></clipPath>
+  </defs>
+
+  <g filter="url(#shadow)">
+    <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#face)"/>
+  </g>
+  <rect x="102" y="102" width="820" height="820" rx="183" fill="none" stroke="url(#rim)" stroke-width="4"/>
+
+  <g clip-path="url(#body)">
+    <!-- Chart levels -->
+    <g stroke="#23324D" stroke-opacity="0.07" stroke-width="6" stroke-linecap="round">
+      <line x1="180" y1="320" x2="844" y2="320"/>
+      <line x1="180" y1="505" x2="844" y2="505"/>
+    </g>
+    <line x1="180" y1="700" x2="844" y2="700" stroke="#23324D" stroke-opacity="0.12" stroke-width="6" stroke-linecap="round"/>
+
+    <!-- Event span -->
+    <rect x="428" y="250" width="350" height="500" rx="34" fill="url(#span)"/>
+
+    <!-- CPU trace -->
+    <path filter="url(#traceShadow)" fill="none" stroke="url(#trace)" stroke-width="46"
+          stroke-linecap="round" stroke-linejoin="round"
+          d="M 196 690
+             L 246 690
+             C 268 690 278 668 300 668
+             C 322 668 332 690 354 690
+             L 404 690
+             C 430 690 434 340 466 340
+             C 490 340 498 362 520 362
+             C 542 362 548 336 572 336
+             C 594 336 600 358 622 358
+             C 646 358 652 328 678 328
+             C 702 328 708 350 738 350
+             C 766 350 770 690 796 690
+             L 830 690"/>
+  </g>
+</svg>

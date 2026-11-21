@@ -4,6 +4,20 @@
 	classes = {};
 	objectVersion = 56;
 	objects = {
+		000000000000000000000052 /* AppIcon.icns */ = {
+			isa = "PBXFileReference";
+			lastKnownFileType = "image.icns";
+			path = "AppIcon.icns";
+			sourceTree = "<group>";
+		};
+		000000000000000000000053 /* onAppIcon.icns */ = {
+			isa = "PBXBuildFile";
+			fileRef = 000000000000000000000052;
+		};
+		000000000000000000000054 /* offAppIcon.icns */ = {
+			isa = "PBXBuildFile";
+			fileRef = 000000000000000000000052;
+		};
 		00000000000000000000004E /* EventForensics.swift */ = {
 			isa = "PBXFileReference";
 			lastKnownFileType = "sourcecode.swift";
@@ -275,6 +289,7 @@
 		00000000000000000000000B /* appGroup */ = {
 			isa = "PBXGroup";
 			children = (
+				000000000000000000000052,
 				00000000000000000000004E,
 				00000000000000000000004A,
 				000000000000000000000047,
@@ -401,6 +416,7 @@
 			isa = "PBXResourcesBuildPhase";
 			buildActionMask = 2147483647;
 			files = (
+				000000000000000000000054,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -408,6 +424,7 @@
 			isa = "PBXResourcesBuildPhase";
 			buildActionMask = 2147483647;
 			files = (
+				000000000000000000000053,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
