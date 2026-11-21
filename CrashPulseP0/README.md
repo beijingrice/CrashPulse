@@ -27,6 +27,25 @@ Debug builds can render every panel state to PNG files in light and dark appeara
 
 On an Intel Mac, use `-destination 'platform=macOS,arch=x86_64'`. For an optimized build, use `-configuration Release` and the `Build/Products/Release` directory.
 
+## Prepare a direct-download beta
+
+From `CrashPulseP0/`, create a Hardened Runtime Release and a ZIP for local testing:
+
+```sh
+Scripts/prepare-beta.zsh .build/beta-local
+```
+
+For external distribution, use a valid Developer ID Application identity in the local Keychain and a configured `notarytool` Keychain profile. The script signs with a secure timestamp, submits the ZIP to Apple, staples the accepted ticket to the app, and packages the stapled app:
+
+```sh
+Scripts/prepare-beta.zsh .build/beta-release \
+  'Developer ID Application: YOUR NAME (TEAMID)' 'crashpulse-notary'
+```
+
+Use a new output directory each time. Share the `-beta.zip` only after checking a download on another Mac with Gatekeeper enabled. Launch from Finder, confirm the menu bar item appears, open Live and Events, and check that records survive a relaunch. Follow [Apple's direct distribution packaging guide](https://developer.apple.com/documentation/xcode/packaging-mac-software-for-distribution) for the signing and notarization workflow.
+
+Start beta testing on Apple silicon. CrashPulse identifies likely contributors to sustained CPU activity and estimates process CPU energy when readings are available. Some system processes are outside sampling coverage. Local history stays on the Mac. Diagnostic exports can include process names, identifiers, and executable paths. Ask testers to review an export before sharing it.
+
 ## Record and investigate CPU events with Sandbox Off
 
 The menu bar monitoring switch also starts and stops the recorder in Sandbox Off. The command-line entry points work without opening a window. Build **CrashPulse-Sandbox-Off**, then run the executable inside the signed app bundle as your regular user:
@@ -48,6 +67,7 @@ runner=.build/xcode/Build/Products/Debug/CrashPulseOff.app/Contents/MacOS/CrashP
 - A CPU event requires 30 seconds of adjacent valid windows for one app group or a standalone process. For an app, eligible helpers under the outermost bundle contribute their CPU usage over the shared sample interval. At least one verified member must link adjacent windows. Known missing member readings are flagged, and the measured sum can still trigger an event if it reaches the threshold. The cold-start threshold is 80% of one logical core. After 15 seconds of below-threshold readings, the trigger uses the largest of 45%, the learned baseline plus 35 percentage points, and 1.5 times the baseline. A candidate keeps its onset threshold. Wake resets, sampling gaps, or wall-clock jumps break continuity. Per-process windows longer than twice the configured interval are discarded.
 - The recorder keeps up to three minutes of recent process windows in memory. When an event qualifies, it retains up to 30 seconds of context before onset, cumulative contributions for the entire event, and up to 15 seconds of follow-up scans at the default interval. With the 10 second setting it allows up to 30 seconds of follow-up. An early stop or missing data can leave a partial timeline. Older journal records are preserved with their original fields.
 - The three leading processes are ranked by observed CPU core-seconds within the event. Their share uses all measured process CPU in that window. The likely app is ranked separately using the increase over its comparable pre-event CPU baseline or verified process starts near onset. With limited baseline evidence, the ranking uses observed CPU. The report shows estimated extra CPU energy only for comparable measured windows. It identifies likely contributors and foreground context. The original in-app task remains unknown when sampling cannot identify it.
+- The event peak and colored timeline describe the process or app group that triggered the recording. If attribution later identifies a different likely contributor, the panel names both and labels the contributor's CPU energy estimate separately. The gray timeline shows total measured CPU.
 - Live and event attribution group real executable paths under the outermost app bundle, so nested helpers roll up to their host app. Standalone executables are shown separately. Processes without an available path remain separate. Impact labels use duration, relative CPU increase, estimated excess CPU energy where available, and foreground context. Recurring background activity requires repeated observed events on separate days. The app offers suggestions and a reversible Ignore action. It does not stop or modify processes.
 - The journal lives in `~/Library/Application Support/CrashPulse/cpu-history.json`. Data stays on the Mac. The store keeps at most 512 events whose last observation falls in the past seven days. Cleanup runs during monitoring and when the next reader or writer opens the history. The file is updated atomically, and one recorder owns a journal at a time. Concurrent `--history` readers can view the latest complete write. After an unexpected recorder exit, the next reader or writer closes active records as `monitorInterrupted` without adding elapsed time. If the journal or some of its records cannot be decoded, the next writer keeps the readable records, moves the original file aside as `cpu-history.damaged-<time>-<id>.json` in the same directory, and continues recording. A journal written by a newer schema version is left untouched and recording stops with an error.
 - Ordinary event and battery updates share a 30-second checkpoint. Event detection, event end, completed follow-up, Ignore or Restore, and a normal stop save pending updates immediately. An unexpected exit can lose the ongoing updates since the last successful checkpoint. The menu panel shows a warning if history cannot be saved.

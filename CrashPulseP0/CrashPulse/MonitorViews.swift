@@ -105,10 +105,10 @@ struct EventStory {
     let event: HighCPUEvent
 
     var severity: EventSeverity { EventSeverity(event) }
+    var triggerName: String { event.cpuTrigger.name }
 
     var appName: String {
-        event.forensics?.suspectedApp?.name ?? event.triggerApp?.name ?? ProcessGroup(path: event.path)?.name
-            ?? event.name ?? "PID \(event.identity.pid)"
+        event.forensics?.suspectedApp?.name ?? triggerName
     }
 
     var energy: Double? {
@@ -122,10 +122,14 @@ struct EventStory {
     }
 
     var summary: String {
-        let load = "Kept the CPU at up to \(PulseFormat.percent(event.peakCPUPercent))"
+        let peak = PulseFormat.percent(event.peakCPUPercent)
         let span = event.endReason == nil
             ? "for \(PulseFormat.duration(event.observedDurationSeconds)) so far"
             : "for \(PulseFormat.duration(event.observedDurationSeconds))"
+        if event.hasSeparateContributor {
+            return "\(triggerName) triggered the event, using up to \(peak) CPU \(span)."
+        }
+        let load = "Kept the CPU at up to \(peak)"
         switch wasInBackground {
         case true?: return "\(load) \(span) while you were using other apps."
         case false?: return "\(load) \(span) while you were using it."
@@ -136,7 +140,7 @@ struct EventStory {
     var advice: String {
         switch severity {
         case .now:
-            "It is still busy. Open Live to see what it is doing right now."
+            "\(triggerName) is still busy. Open Live to check its current CPU use."
         case .background:
             "\(appName) keeps working hard in the background. If you don’t need it running, quit it or turn off its background sync or indexing."
         case .review:
@@ -186,9 +190,13 @@ struct EventStory {
         return "\(time) for \(PulseFormat.duration(event.observedDurationSeconds))"
     }
 
+    var triggerNote: String? {
+        event.hasSeparateContributor ? "Triggered by \(triggerName)" : nil
+    }
+
     var sparkline: [Double?] {
         guard let evidence = event.forensics else { return [] }
-        return (evidence.before + evidence.during + evidence.after).map { $0.triggerCPUPercent ?? $0.measuredCPUPercent }
+        return (evidence.before + evidence.during + evidence.after).map(\.triggerCPUPercent)
     }
 }
 
@@ -497,6 +505,9 @@ private struct EventRow: View {
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(story.appName).font(Pulse.bodyStrong).lineLimit(1)
+                    if let note = story.triggerNote {
+                        Text(note).font(Pulse.caption).foregroundStyle(.secondary).lineLimit(1)
+                    }
                     Text(story.listSubtitle).font(Pulse.caption).foregroundStyle(.secondary).lineLimit(1)
                 }
                 Spacer(minLength: 8)
@@ -508,7 +519,8 @@ private struct EventRow: View {
                 VStack(alignment: .trailing, spacing: 1) {
                     Text(PulseFormat.percent(story.event.peakCPUPercent))
                         .font(.system(size: 13, weight: .medium).monospacedDigit())
-                    Text("peak").font(Pulse.caption).foregroundStyle(.tertiary)
+                    Text(story.event.hasSeparateContributor ? "trigger peak" : "peak")
+                        .font(Pulse.caption).foregroundStyle(.tertiary)
                 }
                 .frame(minWidth: 40, alignment: .trailing)
                 Image(systemName: "chevron.right")
@@ -524,7 +536,8 @@ private struct EventRow: View {
         .buttonStyle(.plain)
         .opacity(severity == .ignored ? 0.55 : 1)
         .onHover { hovering = $0 }
-        .accessibilityLabel("\(story.appName), \(severity.label), \(story.listSubtitle), peak \(PulseFormat.percent(story.event.peakCPUPercent))")
+        .accessibilityLabel([story.appName, story.triggerNote, severity.label, story.listSubtitle,
+                             "peak \(PulseFormat.percent(story.event.peakCPUPercent))"].compactMap { $0 }.joined(separator: ", "))
     }
 }
 
@@ -578,15 +591,18 @@ struct EventDetailView: View {
                     .font(Pulse.title)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
-                    .padding(.bottom, 6)
+                if event.hasSeparateContributor {
+                    Text("Likely contributor").font(Pulse.caption).foregroundStyle(.secondary)
+                }
                 Text(story.summary)
                     .font(Pulse.body)
                     .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 6)
                     .padding(.bottom, 16)
 
                 // Second: what happened over time.
                 if let evidence = event.forensics, !(evidence.before + evidence.during + evidence.after).isEmpty {
-                    PulseTrace(event: event, evidence: evidence, appName: story.appName, color: severity.traceColor)
+                    PulseTrace(event: event, evidence: evidence, triggerName: story.triggerName, color: severity.traceColor)
                         .padding(.bottom, 16)
                 } else {
                     Text("No timeline was recorded. This event is from before CrashPulse kept timelines.")
@@ -658,12 +674,13 @@ struct EventDetailView: View {
     private func figures(_ story: EventStory) -> some View {
         HStack(alignment: .top, spacing: 0) {
             figure(PulseFormat.duration(event.observedDurationSeconds), event.endReason == nil ? "So far" : "Duration")
-            figure(PulseFormat.percent(event.peakCPUPercent), "Peak CPU")
+            figure(PulseFormat.percent(event.peakCPUPercent), event.hasSeparateContributor ? "Trigger peak CPU" : "Peak CPU")
             if let energy = story.energy {
-                figure(PulseFormat.energy(energy), "CPU energy")
-                    .help("Energy used by the CPU for this app during the event. It excludes the display and GPU.")
+                figure(PulseFormat.energy(energy), event.hasSeparateContributor ? "Est. contributor energy" : "Est. CPU energy")
+                    .help("Estimated CPU energy for \(story.appName) during this event.")
             } else if let share = event.forensics?.suspectedAppCPUShare {
-                figure(share.formatted(.percent.precision(.fractionLength(0))), "Share of CPU")
+                figure(share.formatted(.percent.precision(.fractionLength(0))),
+                       event.hasSeparateContributor ? "Contributor share" : "Share of CPU")
             }
         }
     }
@@ -730,7 +747,7 @@ private struct ShareBar: View {
 struct PulseTrace: View {
     let event: HighCPUEvent
     let evidence: EventEvidence
-    let appName: String
+    let triggerName: String
     let color: Color
 
     private struct Point: Identifiable {
@@ -752,9 +769,9 @@ struct PulseTrace: View {
 
     var body: some View {
         let source = (evidence.before + evidence.during + evidence.after).sorted { $0.at < $1.at }
-        let app = Self.points(source) { $0.triggerCPUPercent }
+        let trigger = Self.points(source) { $0.triggerCPUPercent }
         let all = Self.points(source) { $0.measuredCPUPercent }
-        let top = max(100, (app + all).map(\.value).max() ?? 0)
+        let top = max(100, (trigger + all).map(\.value).max() ?? 0)
         let ceiling = (top / 100).rounded(.up) * 100
         let start = event.startedAt
         let end = max(event.lastObservedAt, start.addingTimeInterval(1))
@@ -766,14 +783,14 @@ struct PulseTrace: View {
                 RectangleMark(xStart: .value("Start", start), xEnd: .value("End", end))
                     .foregroundStyle(color.opacity(0.07))
                 ForEach(all) { point in
-                    LineMark(x: .value("Time", point.at), y: .value("All apps", point.value),
+                    LineMark(x: .value("Time", point.at), y: .value("Measured total", point.value),
                              series: .value("Series", "all-\(point.segment)"))
                         .foregroundStyle(Color.secondary.opacity(0.55))
                         .lineStyle(StrokeStyle(lineWidth: 1, lineCap: .round, lineJoin: .round))
                         .interpolationMethod(.monotone)
                 }
-                ForEach(app) { point in
-                    LineMark(x: .value("Time", point.at), y: .value(appName, point.value),
+                ForEach(trigger) { point in
+                    LineMark(x: .value("Time", point.at), y: .value(triggerName, point.value),
                              series: .value("Series", "app-\(point.segment)"))
                         .foregroundStyle(color)
                         .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
@@ -801,8 +818,8 @@ struct PulseTrace: View {
             .accessibilityLabel("CPU use before, during and after the event")
 
             HStack(spacing: 12) {
-                legend(line: true, text: appName)
-                legend(line: false, text: "All apps")
+                if !trigger.isEmpty { legend(triggerName, color: color, lineWidth: 2) }
+                if !all.isEmpty { legend("Measured total", color: .secondary.opacity(0.55), lineWidth: 1) }
                 Spacer()
                 HStack(spacing: 5) {
                     RoundedRectangle(cornerRadius: 2).fill(color.opacity(0.18)).frame(width: 12, height: 8)
@@ -812,11 +829,12 @@ struct PulseTrace: View {
         }
     }
 
-    private func legend(line: Bool, text: String) -> some View {
+    private func legend(_ text: String, color: Color, lineWidth: CGFloat) -> some View {
         HStack(spacing: 5) {
-            Capsule().fill(line ? color : Color.secondary.opacity(0.55)).frame(width: 12, height: line ? 2 : 1)
+            Capsule().fill(color).frame(width: 12, height: lineWidth)
             Text(text).font(Pulse.caption).foregroundStyle(.secondary).lineLimit(1)
         }
+        .help(text)
     }
 }
 
@@ -1204,7 +1222,8 @@ enum UIPreviewRenderer {
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
 
         let now = Date()
-        var events = PreviewData.events(now: now)
+        let fixtures = PreviewData.events(now: now)
+        var events = fixtures
         if arguments.count > 1,
            let real = try? CPUHistoryStore(directory: URL(fileURLWithPath: arguments[1], isDirectory: true),
                                            policy: HighCPUPolicy()).report(now: now) {
@@ -1240,7 +1259,7 @@ enum UIPreviewRenderer {
                               showIgnored: .constant(false), onSelect: { _ in }, onToggleIgnored: { _ in })
             })),
         ]
-        for (index, event) in events.prefix(4).enumerated() {
+        for (index, event) in fixtures.enumerated() {
             scenes.append(("\(index + 2)-detail", AnyView(panel(.events) {
                 EventDetailView(event: event, onBack: {}, onOpenLive: {}, onToggleIgnored: {})
             })))
@@ -1304,22 +1323,28 @@ private enum PreviewData {
                  processes: [("swift-frontend", 0.64), ("Xcode", 0.21), ("clang", 0.08)]),
             make(now: now, minutesAgo: 60 * 26, seconds: 41, ended: true, impact: nil, fg: 0, bg: 0,
                  path: indexer.id, base: 0, level: 95, energy: nil, processes: []),
+            make(now: now, minutesAgo: 75, seconds: 105, ended: true, impact: .sustained, fg: 0, bg: 20,
+                 path: "/Applications/Browser.app/Contents/MacOS/Browser", base: 12, level: 180,
+                 energy: 0.034, processes: [("Browser Helper", 0.60)],
+                 triggerPath: "/Applications/Indexer.app/Contents/MacOS/Indexer"),
         ]
     }
 
     private static func make(now: Date, minutesAgo: Double, seconds: Double, ended: Bool,
                              impact: EventEvidence.Impact?, fg: Int, bg: Int, path: String,
                              base: Double, level: Double, energy: Double?,
-                             processes: [(String, Double)]) -> HighCPUEvent {
+                             processes: [(String, Double)], triggerPath: String? = nil) -> HighCPUEvent {
         let start = now.addingTimeInterval(-minutesAgo * 60)
         let end = start.addingTimeInterval(seconds)
         let identity = ProcessIdentity(pid: Int32(400 + Int(minutesAgo)), startSeconds: 1_800_000_000, startMicroseconds: 0)
         let app = ProcessGroup(path: path)!
+        let trigger = triggerPath ?? path
         var event = HighCPUEvent(id: UUID(), identity: identity, processStartTicks: 1,
-                                 name: (path as NSString).lastPathComponent, path: path,
+                                 name: (trigger as NSString).lastPathComponent, path: trigger,
                                  startedAt: start, lastObservedAt: end, observedDurationSeconds: seconds,
                                  peakCPUPercent: level * 1.06, endReason: ended ? .processExited : nil)
-        event.observedCPUEnergyWattHours = energy
+        event.triggerApp = ProcessGroup.bundle(for: trigger)
+        event.observedCPUEnergyWattHours = triggerPath == nil ? energy : nil
         guard let impact else { return event }
         func point(_ offset: Double, _ value: Double) -> ActivityPoint {
             ActivityPoint(at: start.addingTimeInterval(offset), measuredCPUPercent: value + 35 + Double(Int(offset) % 3) * 6,

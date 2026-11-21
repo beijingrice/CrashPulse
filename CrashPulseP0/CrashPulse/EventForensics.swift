@@ -27,9 +27,25 @@ struct ProcessGroup: Codable, Equatable, Identifiable, Sendable {
         self.init(id: "pid:\(pid)\(instance)", name: name ?? "PID \(pid)")
     }
 
-    private init(id: String, name: String) {
+    fileprivate init(id: String, name: String) {
         self.id = id
         self.name = name
+    }
+}
+
+extension HighCPUEvent {
+    /// The scope used for the recorded CPU peak and timeline, including older per-process events.
+    var cpuTrigger: ProcessGroup {
+        if let triggerApp { return triggerApp }
+        if let path, !path.isEmpty {
+            return ProcessGroup(id: path, name: name ?? (path as NSString).lastPathComponent)
+        }
+        return ProcessGroup(pid: identity.pid, name: name, identity: identity)
+    }
+
+    var hasSeparateContributor: Bool {
+        guard let contributor = forensics?.suspectedApp else { return false }
+        return contributor.id != cpuTrigger.id
     }
 }
 

@@ -487,6 +487,22 @@ final class CPUHistoryTests: XCTestCase {
         XCTAssertEqual(event.endReason, .processMissing)
         XCTAssertEqual(event.ignoredAt, at(61))
         XCTAssertEqual(evidence.suspectedApp?.name, "Browser")
+        XCTAssertEqual(event.cpuTrigger.id, "/Applications/Browser.app")
+        XCTAssertFalse(event.hasSeparateContributor)
+
+        var separate = event
+        separate.triggerApp = ProcessGroup(path: "/Applications/Other/Browser.app/Contents/MacOS/Browser")
+        XCTAssertEqual(separate.cpuTrigger.name, evidence.suspectedApp?.name)
+        XCTAssertTrue(separate.hasSeparateContributor)
+
+        var legacy = event
+        legacy.triggerApp = nil
+        legacy.name = "Renderer"
+        legacy.path = "/Applications/Browser.app/Contents/Helpers/Renderer.app/Contents/MacOS/Renderer"
+        XCTAssertEqual(legacy.cpuTrigger.id, legacy.path)
+        XCTAssertEqual(legacy.cpuTrigger.name, "Renderer")
+        XCTAssertTrue(legacy.hasSeparateContributor)
+
         XCTAssertEqual(evidence.basis, .aboveBaseline)
         XCTAssertEqual(evidence.impact, .review)
         XCTAssertEqual(evidence.topProcesses.map { $0.identity.pid }, [31, 30, 32])
