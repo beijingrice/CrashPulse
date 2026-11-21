@@ -18,6 +18,7 @@ Last updated 2026-11-21. Read `AGENTS.md` first for build commands, working rule
 | `CrashPulseApp.swift` | App delegate, popover, sampling actor and `MonitorModel` |
 | `MonitorViews.swift` | All panel UI, Settings window, and the Debug-only `UIPreviewRenderer` |
 | `HistoryCommand.swift`, `Diagnostics.swift` | `--monitor`, `--history`, `--capture` command-line modes |
+| `Design/AppIcon.svg`, `Design/AppIcon-small.svg`, `Scripts/make-icon.zsh` | App icon sources and the script that builds `CrashPulse/AppIcon.icns` |
 
 ## Recent work
 
@@ -26,6 +27,7 @@ Last updated 2026-11-21. Read `AGENTS.md` first for build commands, working rule
 3. History writes are batched at 30 s checkpoints instead of every scan (`b4056c2`). App bundle classification is cached (`8d2498f`).
 4. Panel redesign (`70744b5`): Overview removed. Events are grouped by day with severity dots and sparklines. Event detail follows the four tiers in `AGENTS.md`, with one continuous CPU trace. Live has a 3-minute trend and ranked apps with share bars. Debug builds have `--render-ui`.
 5. Event detail gives the status and observed duration more weight, with exact timestamps and the end reason below. A process disappearing from samples is described as an observation. Verified the status in light and dark renders and the real Release popover.
+6. App icon (`4b52c45`, `468470a`): a calm CPU trace rising into a sustained plateau inside a tinted event span, matching the event detail chart. The owner approved this version. Both targets bundle `AppIcon.icns` through `CFBundleIconFile`, and Finder shows it. To change the icon, edit the SVGs in `Design/` and run `Scripts/make-icon.zsh` (needs `rsvg-convert` from Homebrew). Never edit the `.icns` directly. The small SVG is a simplified variant for 16 and 32 px, so keep the two in step. The menu bar item still uses the `waveform.path.ecg` SF Symbol on purpose.
 
 ## Open work, in suggested order
 
@@ -35,6 +37,7 @@ Last updated 2026-11-21. Read `AGENTS.md` first for build commands, working rule
 4. **The command line has no foreground context.** `HistoryCommand.monitor` never sets `snapshot.foregroundPID`, so events recorded through `--monitor` can never be rated "busy in the background". Either read the frontmost app there too, or document the gap.
 5. **Energy attribution.** CrashPulse uses `ri_energy_nj`, which excludes energy that daemons spend on an app's behalf. Consider also reading `ri_billed_energy` for a "billed" figure. It is Apple silicon only either way.
 6. **Threshold tuning.** After a warm baseline, the trigger can fall to 45% of one core, which may be noisy on many-core Macs. The owner's real history so far contains only test-fixture events, so collect a few days of real data before changing it.
+7. **Optional: adaptive icon appearances.** The `.icns` has a single light appearance. macOS 26 can show dark, clear and tinted variants for icons made in Icon Composer (`.icon` in an asset catalog). Only do this if the owner asks. Reuse the existing SVG artwork, keep the light version identical, and keep `make-icon.zsh` working for older systems.
 
 ## Before you finish a session
 
