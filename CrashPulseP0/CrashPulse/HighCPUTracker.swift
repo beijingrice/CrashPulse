@@ -146,8 +146,13 @@ struct HighCPUTracker {
         var rows: [ProcessRow] = []
     }
 
+    private struct PathGroup {
+        let bundle: ProcessGroup?
+    }
+
     private var streaks: [Unit: Streak] = [:]
     private var baselines: [Unit: Baseline] = [:]
+    private var pathGroups: [String: PathGroup] = [:]
     private let policy: HighCPUPolicy
     private let maximumInterval: Double
 
@@ -161,10 +166,17 @@ struct HighCPUTracker {
         var apps: [String: AppMembers] = [:]
         var updates: [HighCPUEvent] = []
         var next: [Unit: Streak] = [:]
+        var observedPaths: [String: PathGroup] = [:]
+        observedPaths.reserveCapacity(pathGroups.count)
         var observedBaselines: [Unit: Baseline] = [:]
 
         for row in snapshot.rows {
-            if let group = ProcessGroup.bundle(for: row.path) {
+            let group = row.path.flatMap { path in
+                let cached = observedPaths[path] ?? pathGroups[path] ?? PathGroup(bundle: ProcessGroup.bundle(for: path))
+                observedPaths[path] = cached
+                return cached.bundle
+            }
+            if let group {
                 apps[group.id, default: AppMembers(group: group)].rows.append(row)
             } else {
                 observe(.process(row.pid), app: nil, rows: [row], next: &next,
@@ -179,6 +191,7 @@ struct HighCPUTracker {
         updates.append(contentsOf: streaks.values.compactMap { finish($0, reason: .processMissing) })
         streaks = next
         baselines = observedBaselines
+        pathGroups = observedPaths
         return updates
     }
 
@@ -247,6 +260,7 @@ struct HighCPUTracker {
         let updates = streaks.values.compactMap { finish($0, reason: reason) }
         streaks.removeAll(keepingCapacity: true)
         baselines.removeAll(keepingCapacity: true)
+        pathGroups.removeAll(keepingCapacity: true)
         return updates
     }
 
