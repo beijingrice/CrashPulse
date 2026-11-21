@@ -6,9 +6,9 @@ CrashPulse is a macOS menu bar app that keeps diagnostic reports of sustained CP
 
 Use Xcode 15 or later with a macOS SDK. The app targets macOS 14.0 and later. The paired experiment requires an interactive macOS login and an ordinary user account. Xcode signs both builds locally with an ad hoc signature, so local testing requires no Apple Developer team.
 
-Open `CrashPulseP0.xcodeproj` in Xcode. Select **CrashPulse-Sandbox-Off**, choose **My Mac**, and press ⌘R. Click the waveform icon in the macOS menu bar. Monitoring starts automatically on first launch and the first CPU readings appear after two samples. **Events** opens first. Click an event to see a likely app, the before, during, and after timeline, the three leading processes, and suggested next steps. **Overview** shows the latest event, current measured CPU, and today's battery ranking. **Live** shows app groups ranked by CPU or power, an expandable process list, and the recent CPU trend.
+Open `CrashPulseP0.xcodeproj` in Xcode. Select **CrashPulse-Sandbox-Off**, choose **My Mac**, and press ⌘R. Click the waveform icon in the macOS menu bar. Monitoring starts automatically on first launch and the first CPU readings appear after two samples. **Events** opens first. Events are grouped by day, each with a severity dot and a small CPU trace. Click one to see the likely app, how serious it was, a single CPU timeline that runs from before the event through after it, the duration, peak CPU and CPU energy, what to do next, and the processes involved. Right-click an event, or use the button at the bottom of its detail, to ignore or restore it. **Live** shows app groups ranked by CPU or power, an expandable process list, and the recent CPU trend.
 
-Open **Settings…** from the panel to change the sample interval or export the latest process sample or the battery ranking and events. The default interval is 5 seconds. Changes restart the sampling baseline. Pause and resume from the panel or Settings. The app remembers the monitoring switch and interval. Closing the panel or Settings keeps the sampler running. Use **Quit CrashPulse** to exit the app. The **CrashPulse-Sandbox-On** scheme remains available for the permissions experiment.
+Open **Settings…** from the panel to change the sample interval or export the latest process sample or the battery ranking and events. The default interval is 5 seconds. Changes restart the sampling baseline. Pause and resume from the panel or Settings. The app remembers the monitoring switch and interval. Closing the panel or Settings keeps the sampler running. Use **Quit** in the panel to exit the app. The **CrashPulse-Sandbox-On** scheme remains available for the permissions experiment.
 
 From this directory on Apple Silicon:
 
@@ -22,6 +22,8 @@ xcodebuild -project CrashPulseP0.xcodeproj -scheme CrashPulse-Sandbox-Off \
 open .build/xcode/Build/Products/Debug/CrashPulseOn.app
 open .build/xcode/Build/Products/Debug/CrashPulseOff.app
 ```
+
+Debug builds can render every panel state to PNG files in light and dark appearance, using sample events plus an optional copy of a history directory: `CrashPulseOff --render-ui OUTPUT_DIR [HISTORY_DIR]`. Pass a copy, because reading a history directory can repair it. Release builds do not include this option.
 
 On an Intel Mac, use `-destination 'platform=macOS,arch=x86_64'`. For an optimized build, use `-configuration Release` and the `Build/Products/Release` directory.
 
@@ -120,9 +122,9 @@ On Apple silicon, CrashPulse attempts to read the kernel's cumulative per-task C
 
 These readings cover CPU energy attributed to the process. GPU, the display, charging and other system hardware are outside this estimate. A power reading does not tell you what share of the battery a process used. Hardware with no usable counter and denied or invalid readings show a dash. CPU and memory can still be available independently. MacPow provided the reference for a power-focused ranking and uses a separate billed-energy field for its own process display. [MacPow implementation notes](https://github.com/k06a/macpow#power-measurements-vs-estimates)
 
-The battery ranking in **Overview** uses the Mac's local date. It counts verified intervals between consecutive scans that both started and ended on battery, discarding observed supply transitions, long gaps, sleep discontinuities, and samples that cross midnight. Processes whose executable paths are inside the same outermost app bundle share a row, including nested helpers. Standalone executables have their own row. Processes without a usable path are grouped as unidentified. Percentages are shares of measured process CPU energy during tracked battery time. Brief supply changes between polls may go unobserved.
+The exported battery ranking uses the Mac's local date. It counts verified intervals between consecutive scans that both started and ended on battery, discarding observed supply transitions, long gaps, sleep discontinuities, and samples that cross midnight. Processes whose executable paths are inside the same outermost app bundle share a row, including nested helpers. Standalone executables have their own row. Processes without a usable path are grouped as unidentified. Brief supply changes between polls may go unobserved.
 
-The panel updates from the current recorder while it is open. The ranking still shows that day's recorded battery use after reconnecting power or restarting CrashPulse. A new day starts a new total.
+The export includes that day's recorded battery use after reconnecting power or restarting CrashPulse. A new day starts a new total.
 
 The history export (schema 4) includes `observedCPUEnergyWattHours`, time covered by energy readings, optional `forensics` evidence, `recurringBackgroundActivity`, and an optional `batteryToday` section. App events include `triggerApp` and may flag `incompleteAppSamples`. Earlier on-disk schema versions are upgraded automatically. Live diagnostics (schema 2) include power supply and per-process `cpuPower` with `watts` and `intervalWattHours`.
 

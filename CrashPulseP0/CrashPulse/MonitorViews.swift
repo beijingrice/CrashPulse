@@ -3,778 +3,362 @@ import Charts
 import SwiftUI
 import UniformTypeIdentifiers
 
-struct MenuMonitorView: View {
-    @ObservedObject var model: MonitorModel
+// MARK: - Design tokens
+
+/// One place for the panel's type scale and colors. Priority is carried by size and weight first,
+/// then by color: the severity color marks only what needs attention.
+enum Pulse {
+    static let width: CGFloat = 360
+    static let gutter: CGFloat = 16
+
+    static var severe: Color { Color(nsColor: .systemRed) }
+    static var signal: Color { Color(nsColor: .systemOrange) }
+    static var watching: Color { Color(nsColor: .systemGreen) }
+
+    static let title = Font.system(size: 24, weight: .semibold)
+    static let figure = Font.system(size: 20, weight: .semibold).monospacedDigit()
+    static let body = Font.system(size: 13)
+    static let bodyStrong = Font.system(size: 13, weight: .semibold)
+    static let detail = Font.system(size: 12)
+    static let caption = Font.system(size: 11)
+    static let captionStrong = Font.system(size: 11, weight: .semibold)
+}
+
+enum PulseFormat {
+    static func percent(_ value: Double) -> String {
+        value.formatted(.number.precision(.fractionLength(0))) + "%"
+    }
+
+    static func precisePercent(_ value: Double) -> String {
+        value.formatted(.number.precision(.fractionLength(1))) + "%"
+    }
+
+    static func duration(_ seconds: Double) -> String {
+        Duration.seconds(seconds.rounded())
+            .formatted(.units(allowed: [.hours, .minutes, .seconds], width: .narrow, maximumUnitCount: 2))
+    }
+
+    static func power(_ watts: Double) -> String {
+        if watts >= 1 { return watts.formatted(.number.precision(.fractionLength(2))) + " W" }
+        if watts > 0 && watts < 0.001 { return "<1 mW" }
+        return (watts * 1_000).formatted(.number.precision(.fractionLength(0))) + " mW"
+    }
+
+    static func energy(_ wattHours: Double) -> String {
+        if wattHours >= 1 { return wattHours.formatted(.number.precision(.fractionLength(0...2))) + " Wh" }
+        let milli = wattHours * 1_000
+        if milli > 0 && milli < 0.1 { return "<0.1 mWh" }
+        return milli.formatted(.number.precision(.fractionLength(milli < 10 ? 1 : 0))) + " mWh"
+    }
+}
+
+// MARK: - Event wording
+
+enum EventSeverity {
+    case now, background, review, inUse, unknown, ignored
+
+    init(_ event: HighCPUEvent) {
+        if event.ignoredAt != nil {
+            self = .ignored
+        } else if event.endReason == nil {
+            self = .now
+        } else {
+            switch event.forensics?.impact {
+            case .sustained: self = .background
+            case .review: self = .review
+            case .activity: self = .inUse
+            case nil: self = .unknown
+            }
+        }
+    }
+
+    var label: String {
+        switch self {
+        case .now: "Happening now"
+        case .background: "Busy in the background"
+        case .review: "Worth a look"
+        case .inUse: "Busy while in use"
+        case .unknown: "Earlier recording"
+        case .ignored: "Ignored"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .now, .background: Pulse.severe
+        case .review: Pulse.signal
+        case .inUse, .unknown, .ignored: Color.secondary
+        }
+    }
+
+    /// Neutral events still need a visible trace line.
+    var traceColor: Color {
+        switch self {
+        case .inUse, .unknown, .ignored: Color.accentColor
+        default: color
+        }
+    }
+}
+
+/// Plain-language text derived from one recorded event.
+struct EventStory {
+    let event: HighCPUEvent
+
+    var severity: EventSeverity { EventSeverity(event) }
+
+    var appName: String {
+        event.forensics?.suspectedApp?.name ?? event.triggerApp?.name ?? ProcessGroup(path: event.path)?.name
+            ?? event.name ?? "PID \(event.identity.pid)"
+    }
+
+    var energy: Double? {
+        if let evidence = event.forensics, evidence.suspectedApp != nil { return evidence.suspectedAppCPUWattHours }
+        return event.observedCPUEnergyWattHours
+    }
+
+    private var wasInBackground: Bool? {
+        guard let evidence = event.forensics, evidence.foregroundSamples + evidence.backgroundSamples > 0 else { return nil }
+        return evidence.backgroundSamples > evidence.foregroundSamples
+    }
+
+    var summary: String {
+        let load = "Kept the CPU at up to \(PulseFormat.percent(event.peakCPUPercent))"
+        let span = event.endReason == nil
+            ? "for \(PulseFormat.duration(event.observedDurationSeconds)) so far"
+            : "for \(PulseFormat.duration(event.observedDurationSeconds))"
+        switch wasInBackground {
+        case true?: return "\(load) \(span) while you were using other apps."
+        case false?: return "\(load) \(span) while you were using it."
+        case nil: return "\(load) \(span)."
+        }
+    }
+
+    var advice: String {
+        switch severity {
+        case .now:
+            "It is still busy. Open Live to see what it is doing right now."
+        case .background:
+            "\(appName) keeps working hard in the background. If you don’t need it running, quit it or turn off its background sync or indexing."
+        case .review:
+            "\(appName) was busy while you weren’t using it. If you didn’t expect that, watch it in Live next time."
+        case .inUse:
+            "This is usually expected: \(appName) was busy while you were using it."
+        case .unknown:
+            "This event was recorded before CrashPulse kept timelines."
+        case .ignored:
+            "You ignored this event. It no longer counts toward patterns."
+        }
+    }
+
+    var timeNote: String {
+        let start = event.startedAt.formatted(.dateTime.month(.abbreviated).day().hour().minute().second())
+        guard let reason = event.endReason else { return "Started \(start)." }
+        let end = event.lastObservedAt.formatted(date: .omitted, time: .standard)
+        return "\(start) to \(end). Ended \(Self.ending(reason))."
+    }
+
+    private static func ending(_ reason: HighCPUEvent.EndReason) -> String {
+        switch reason {
+        case .belowThreshold: "when CPU use dropped"
+        case .processExited, .processMissing: "when the process quit"
+        case .processChanged: "when the process restarted"
+        case .sampleUnavailable, .samplingGap: "when readings stopped"
+        case .clockChanged: "after a clock change"
+        case .monitorStopped: "when monitoring paused"
+        case .monitorInterrupted: "when CrashPulse quit unexpectedly"
+        }
+    }
+
+    var listSubtitle: String {
+        let time = event.startedAt.formatted(date: .omitted, time: .shortened)
+        if event.endReason == nil { return "Since \(time), still busy" }
+        return "\(time) for \(PulseFormat.duration(event.observedDurationSeconds))"
+    }
+
+    var sparkline: [Double?] {
+        guard let evidence = event.forensics else { return [] }
+        return (evidence.before + evidence.during + evidence.after).map { $0.triggerCPUPercent ?? $0.measuredCPUPercent }
+    }
+}
+
+// MARK: - Panel chrome
+
+struct PanelStatus {
+    let text: String
+    let color: Color
+}
+
+struct PanelChrome<Content: View>: View {
+    let status: PanelStatus
+    let monitoring: Bool
+    let showsTabs: Bool
+    @Binding var tab: MenuMonitorView.Tab
+    var historyError: String?
+    let onToggleMonitoring: () -> Void
     let openSettings: () -> Void
-
-    private enum Section: String {
-        case battery = "Overview"
-        case live = "Live"
-        case history = "Events"
-    }
-
-    private struct HistoryRefresh: Equatable {
-        let section: Section
-        let latestScan: Date?
-    }
-
-    private enum Order: String, CaseIterable {
-        case power = "Power"
-        case cpu = "CPU"
-    }
-
-    @State private var section: Section
-    @State private var order = Order.power
-    @State private var showingAll = false
-    @State private var search = ""
-    @State private var expandedGroups: Set<String> = []
-    @State private var selectedEvent: UUID?
-    @State private var showIgnored = false
-    @State private var eventActionError: String?
-    @State private var report: CPUHistoryReport?
-    @State private var historyReadError: String?
-    private let memoryStyle = ByteCountFormatStyle(style: .memory)
-
-    init(model: MonitorModel, openSettings: @escaping () -> Void) {
-        self.model = model
-        self.openSettings = openSettings
-        _section = State(initialValue: model.run.canRecordHistory ? .history : .live)
-    }
+    @ViewBuilder let content: Content
 
     var body: some View {
         VStack(spacing: 0) {
             header
-                .padding(.horizontal, 16)
-                .padding(.vertical, 14)
-            if let error = model.historyError {
-                Label("History could not be saved.", systemImage: "exclamationmark.triangle")
-                    .font(.caption)
-                    .foregroundStyle(.orange)
+            if let historyError {
+                Label("History can’t be saved. Recording continues in memory.", systemImage: "exclamationmark.triangle.fill")
+                    .font(Pulse.caption)
+                    .foregroundStyle(Pulse.signal)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 12)
-                    .help(error)
+                    .padding(.horizontal, Pulse.gutter)
+                    .padding(.bottom, 10)
+                    .help(historyError)
             }
-            if model.run.canRecordHistory {
-                Picker("View", selection: $section) {
-                    Text(Section.history.rawValue).tag(Section.history)
-                    Text(Section.battery.rawValue).tag(Section.battery)
-                    Text(Section.live.rawValue).tag(Section.live)
+            if showsTabs {
+                Picker("View", selection: $tab) {
+                    ForEach(MenuMonitorView.Tab.allCases, id: \.self) { Text($0.rawValue).tag($0) }
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
-                .padding(.horizontal, 16)
+                .padding(.horizontal, Pulse.gutter)
                 .padding(.bottom, 12)
             }
             Divider()
-            switch section {
-            case .battery: overview
-            case .live: live
-            case .history: history
-            }
+            content
             Divider()
             footer
         }
-        .frame(width: 380)
-        .task(id: historyRefresh) {
-            if historyRefresh != nil { await refreshHistory() }
-        }
-    }
-
-    private var historyRefresh: HistoryRefresh? {
-        guard model.panelVisible, section != .live else { return nil }
-        return HistoryRefresh(section: section, latestScan: model.snapshot?.sampledAt)
+        .frame(width: Pulse.width)
     }
 
     private var header: some View {
-        HStack(spacing: 11) {
+        HStack(spacing: 7) {
             Image(systemName: "waveform.path.ecg")
-                .font(.system(size: 19, weight: .semibold))
+                .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(Color.accentColor)
-                .frame(width: 36, height: 36)
-                .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
                 .accessibilityHidden(true)
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text("CrashPulse")
-                    .font(.system(size: 17, weight: .semibold))
-                Label(status, systemImage: statusSymbol)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            Text("CrashPulse").font(Pulse.bodyStrong)
+            Spacer(minLength: 8)
+            HStack(spacing: 5) {
+                Circle().fill(status.color).frame(width: 6, height: 6)
+                Text(status.text).font(Pulse.caption).foregroundStyle(.secondary)
             }
-
-            Spacer()
-            Button {
-                model.setMonitoring(!model.monitoringEnabled)
-            } label: {
-                Image(systemName: model.monitoringEnabled ? "pause.fill" : "play.fill")
-                    .frame(width: 24, height: 23)
+            .accessibilityElement(children: .combine)
+            Button(action: onToggleMonitoring) {
+                Image(systemName: monitoring ? "pause.fill" : "play.fill")
+                    .font(.system(size: 11))
+                    .frame(width: 22, height: 22)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.borderless)
-            .help(model.monitoringEnabled ? "Pause monitoring" : "Resume monitoring")
-            .accessibilityLabel(model.monitoringEnabled ? "Pause monitoring" : "Resume monitoring")
+            .help(monitoring ? "Pause monitoring" : "Resume monitoring")
+            .accessibilityLabel(monitoring ? "Pause monitoring" : "Resume monitoring")
         }
-    }
-
-    private var status: String {
-        if !model.monitoringEnabled { return "Paused" }
-        guard let snapshot = model.snapshot else { return "Starting" }
-        if snapshot.enumerationIssue != nil { return "Process access unavailable" }
-        switch snapshot.powerSupply {
-        case .adapter: return "Plugged in"
-        case .battery: return "On battery"
-        case .ups: return "On UPS"
-        case nil: return "Monitoring"
-        }
-    }
-
-    private var statusSymbol: String {
-        if !model.monitoringEnabled { return "pause.circle" }
-        switch model.snapshot?.powerSupply {
-        case .adapter: return "powerplug"
-        case .battery: return "battery.75percent"
-        case .ups: return "bolt.fill"
-        case nil: return "circle.dotted"
-        }
-    }
-
-    private var overview: some View {
-        VStack(spacing: 0) {
-            HStack {
-                if let sampled = model.activity.last?.measuredCPUPercent {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("Measured CPU now").font(.caption).foregroundStyle(.secondary)
-                        Text(percent(sampled)).font(.headline).monospacedDigit()
-                    }
-                }
-                Spacer()
-                if let report {
-                    let today = report.events.filter {
-                        $0.ignoredAt == nil && Calendar.current.isDate($0.startedAt, inSameDayAs: report.generatedAt)
-                    }.count
-                    VStack(alignment: .trailing, spacing: 3) {
-                        Text("CPU events today").font(.caption).foregroundStyle(.secondary)
-                        Text(today.formatted()).font(.headline).monospacedDigit()
-                    }
-                }
-            }
-            .padding(16)
-            Divider()
-            if let report {
-                if let latest = report.events.first(where: { $0.ignoredAt == nil }) {
-                    Button {
-                        selectedEvent = latest.id
-                        section = .history
-                    } label: {
-                        HStack {
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text("Latest CPU event").font(.caption).foregroundStyle(.secondary)
-                                Text(eventName(latest)).font(.subheadline.weight(.semibold)).lineLimit(1)
-                            }
-                            Spacer()
-                            Image(systemName: "chevron.right").font(.caption)
-                        }
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .padding(16)
-                    Divider()
-                }
-            }
-            batteryToday
-        }
-    }
-
-    private var batteryToday: some View {
-        VStack(alignment: .leading, spacing: 11) {
-            if let historyReadError {
-                notice("Battery history unavailable", icon: "exclamationmark.circle", message: historyReadError)
-            } else if let report {
-                if let day = report.batteryToday, let leader = day.apps.first {
-                    batterySummary(day, leader: leader)
-                } else if report.batteryToday != nil {
-                    notice("No app energy readings yet", icon: "battery.50percent",
-                           message: "CrashPulse saw battery activity and is waiting for usable CPU energy readings.")
-                } else {
-                    notice("No battery use recorded today", icon: "battery.75percent",
-                           message: "Leave monitoring on while unplugged. App usage will appear after two battery samples.")
-                }
-            } else {
-                ProgressView().frame(maxWidth: .infinity, minHeight: 90)
-            }
-        }
-        .padding(16)
-    }
-
-    private func batterySummary(_ day: BatteryUsageReport, leader: BatteryAppUsage) -> some View {
-        VStack(alignment: .leading, spacing: 11) {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Top CPU drain on battery").font(.caption).foregroundStyle(.secondary)
-                    Text(leader.name).font(.title2.weight(.semibold)).lineLimit(1)
-                    Text("\(batteryShare(leader, of: day)) of measured CPU energy")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                Text(energy(leader.wattHours))
-                    .font(.title3.weight(.semibold))
-                    .monospacedDigit()
-            }
-            .padding(11)
-            .background(Color.accentColor.opacity(0.10), in: RoundedRectangle(cornerRadius: 9))
-
-            ForEach(Array(day.apps.dropFirst().prefix(5))) { app in
-                HStack {
-                    Text(app.name).lineLimit(1)
-                    Spacer(minLength: 8)
-                    Text(batteryShare(app, of: day))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 44, alignment: .trailing)
-                    Text(energy(app.wattHours))
-                        .frame(width: 88, alignment: .trailing)
-                }
-                .font(.callout)
-                .monospacedDigit()
-                .accessibilityElement(children: .combine)
-            }
-
-            Divider()
-            Text("\(energy(day.measuredCPUWattHours)) measured · \(batteryDuration(day.observedSeconds)) on battery")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .help("The ranking covers measured process CPU energy during sampled battery use.")
-        }
-    }
-
-    private func batteryShare(_ app: BatteryAppUsage, of day: BatteryUsageReport) -> String {
-        guard day.measuredCPUWattHours > 0 else { return "—" }
-        return (app.wattHours / day.measuredCPUWattHours).formatted(.percent.precision(.fractionLength(0)))
-    }
-
-    private func batteryDuration(_ seconds: Double) -> String {
-        if seconds < 60 { return "\(Int(seconds)) sec" }
-        let minutes = Int(seconds) / 60
-        return minutes < 60 ? "\(minutes) min" : "\(minutes / 60) h \(minutes % 60) min"
-    }
-
-    @ViewBuilder
-    private var live: some View {
-        if !model.monitoringEnabled {
-            VStack(spacing: 8) {
-                notice("Monitoring is paused", icon: "pause.circle",
-                       message: "Resume to see current CPU and power.")
-                Button("Resume monitoring") { model.setMonitoring(true) }
-                    .padding(.bottom, 18)
-            }
-        } else if let snapshot = model.snapshot, let issue = snapshot.enumerationIssue {
-            notice("Process list unavailable", icon: "lock",
-                   message: issue.category == .permissionDenied
-                    ? "macOS denied access to the process list." : "CrashPulse will try again on the next scan.")
-        } else if let snapshot = model.snapshot, snapshot.coverage.cpu > 0 {
-            processList(snapshot)
-        } else {
-            notice("Collecting readings…", icon: "waveform",
-                   message: "CPU and power appear after two samples.")
-        }
-    }
-
-
-    private struct LiveGroup: Identifiable {
-        var id: String { app.id }
-        let app: ProcessGroup
-        let rows: [ProcessRow]
-        let cpu: Double?
-        let watts: Double?
-
-        init(app: ProcessGroup, rows: [ProcessRow]) {
-            self.app = app
-            self.rows = rows
-            let percentages = rows.compactMap(\.cpuPercent)
-            let measuredWatts = rows.compactMap { $0.cpuPower?.watts }
-            cpu = percentages.isEmpty ? nil : percentages.reduce(0, +)
-            watts = measuredWatts.isEmpty ? nil : measuredWatts.reduce(0, +)
-        }
-    }
-
-    private func processList(_ snapshot: Snapshot) -> some View {
-        let hasPower = snapshot.rows.contains { $0.cpuPower != nil }
-        let effectiveOrder: Order = hasPower ? order : .cpu
-        let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
-        let groups = Dictionary(grouping: snapshot.rows, by: { ProcessGroup(row: $0).id }).values.compactMap { rows -> LiveGroup? in
-            guard let first = rows.first else { return nil }
-            let app = ProcessGroup(row: first)
-            if showingAll {
-                guard query.isEmpty || app.name.localizedStandardContains(query) || rows.contains(where: {
-                    processName($0).localizedStandardContains(query) || String($0.pid).contains(query)
-                }) else { return nil }
-            }
-            let group = LiveGroup(app: app, rows: rows)
-            return showingAll || (effectiveOrder == .power ? group.watts != nil : group.cpu != nil) ? group : nil
-        }.sorted {
-            let left = (effectiveOrder == .power ? $0.watts : $0.cpu) ?? -1
-            let right = (effectiveOrder == .power ? $1.watts : $1.cpu) ?? -1
-            return left == right ? $0.id < $1.id : left > right
-        }
-
-        return VStack(alignment: .leading, spacing: 8) {
-            if model.activity.contains(where: { $0.measuredCPUPercent != nil }) {
-                Text("Measured CPU · last 3 min").font(.caption).foregroundStyle(.secondary)
-                activityChart(model.activity, ceiling: max(100, model.activity.compactMap(\.measuredCPUPercent).max() ?? 0),
-                              color: .accentColor)
-            }
-            HStack {
-                if showingAll {
-                    Button {
-                        showingAll = false
-                        search = ""
-                        expandedGroups.removeAll()
-                    } label: { Label("Top apps", systemImage: "chevron.left") }
-                    .buttonStyle(.borderless)
-                } else {
-                    Text("Top apps").font(.subheadline.weight(.semibold))
-                }
-                Spacer()
-                Picker("Sort by", selection: Binding(get: { effectiveOrder }, set: { order = $0 })) {
-                    ForEach(Order.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-                }
-                .labelsHidden()
-                .fixedSize()
-                .disabled(!hasPower)
-                .accessibilityLabel("Sort by")
-            }
-            if showingAll { TextField("Search app, process or PID", text: $search).textFieldStyle(.roundedBorder) }
-            HStack(spacing: 10) {
-                Text("App")
-                Spacer()
-                Text("CPU").frame(width: 55, alignment: .trailing)
-                Text("CPU power").frame(width: 80, alignment: .trailing)
-            }
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 8)
-            if groups.isEmpty {
-                notice("No matching apps", icon: "magnifyingglass", message: nil)
-            } else {
-                ScrollView {
-                    LazyVStack(spacing: 3) {
-                        ForEach(showingAll ? groups : Array(groups.prefix(6))) { liveGroupRow($0) }
-                    }
-                }
-                .frame(height: showingAll ? 242 : 199)
-            }
-            if !showingAll {
-                Button("All apps and processes", systemImage: "list.bullet") { showingAll = true }
-                    .buttonStyle(.borderless)
-            }
-        }
-        .padding(16)
-    }
-
-    private func liveGroupRow(_ group: LiveGroup) -> some View {
-        DisclosureGroup(isExpanded: Binding(get: { expandedGroups.contains(group.id) }, set: { expanded in
-            if expanded { expandedGroups.insert(group.id) } else { expandedGroups.remove(group.id) }
-        })) {
-            VStack(spacing: 2) {
-                ForEach(group.rows) { processRow($0, showPID: true) }
-            }
-            .padding(.leading, 8)
-        } label: {
-            HStack(spacing: 10) {
-                Text(group.app.name).fontWeight(.medium).lineLimit(1)
-                Spacer(minLength: 2)
-                Text(group.cpu.map(percent) ?? "—").frame(width: 55, alignment: .trailing)
-                Text(group.watts.map(power) ?? "—").frame(width: 80, alignment: .trailing)
-            }
-            .font(.callout)
-            .monospacedDigit()
-        }
-        .padding(.horizontal, 7)
-        .padding(.vertical, 5)
-        .background(.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 7))
-    }
-
-    private func processRow(_ row: ProcessRow, showPID: Bool) -> some View {
-        HStack(spacing: 10) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(processName(row))
-                    .lineLimit(1)
-                    .font(.system(size: 13, weight: .medium))
-                if showPID {
-                    Text(processDetails(row))
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-            }
-            Spacer(minLength: 2)
-            Text(row.cpuPercent.map(percent) ?? "—")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .frame(width: 55, alignment: .trailing)
-            Text(row.cpuPower.map { power($0.watts) } ?? "—")
-                .font(.callout.weight(.medium))
-                .frame(width: 80, alignment: .trailing)
-        }
-        .monospacedDigit()
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-        .background(.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 7))
-        .help(row.cpuPower.map { "PID \(row.pid) · \(energy($0.intervalWattHours)) of CPU energy in the last sample" }
-              ?? "PID \(row.pid) · CPU power unavailable")
-        .accessibilityElement(children: .combine)
-    }
-
-
-    private var history: some View {
-        Group {
-            if let report {
-                if let selectedEvent, let event = report.events.first(where: { $0.id == selectedEvent }) {
-                    incident(event)
-                } else {
-                    eventList(report)
-                }
-            } else if let historyReadError {
-                notice("Events unavailable", icon: "exclamationmark.circle", message: historyReadError)
-            } else {
-                ProgressView().frame(maxWidth: .infinity, minHeight: 90)
-            }
-        }
-        .padding(16)
-    }
-
-    private func eventList(_ report: CPUHistoryReport) -> some View {
-        let visible = report.events.filter { showIgnored || $0.ignoredAt == nil }
-        let recent = visible.filter { (0...86_400).contains(report.generatedAt.timeIntervalSince($0.startedAt)) }.count
-        let sorted = visible.sorted {
-            let lhs = impactRank($0)
-            let rhs = impactRank($1)
-            if lhs != rhs { return lhs > rhs }
-            if $0.startedAt != $1.startedAt { return $0.startedAt > $1.startedAt }
-            return $0.id.uuidString < $1.id.uuidString
-        }
-        return VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("\(recent) in last 24 hours").font(.subheadline.weight(.semibold))
-                Spacer()
-                if report.events.contains(where: { $0.ignoredAt != nil }) {
-                    Toggle("Show ignored", isOn: $showIgnored).toggleStyle(.checkbox).font(.caption)
-                }
-            }
-            if let pattern = report.recurringBackgroundActivity.first {
-                Text("\(pattern.app.name) · \(pattern.events) background events across \(pattern.days) days")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            if let historyReadError {
-                Text(historyReadError).font(.caption).foregroundStyle(.secondary)
-            }
-            if sorted.isEmpty {
-                notice("No CPU events yet", icon: "waveform.path.ecg",
-                       message: "CrashPulse keeps context around sustained CPU activity while it runs.")
-            } else {
-                ScrollView {
-                    LazyVStack(spacing: 5) {
-                        ForEach(sorted) { event in
-                            Button { selectedEvent = event.id } label: { historyRow(event) }.buttonStyle(.plain)
-                        }
-                    }
-                }
-                .frame(maxHeight: 280)
-            }
-        }
-    }
-
-    private func historyRow(_ event: HighCPUEvent) -> some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(eventName(event)).fontWeight(.semibold).lineLimit(1)
-                Text(event.startedAt.formatted(date: .abbreviated, time: .shortened)
-                     + " · " + impactLabel(event))
-                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
-            }
-            Spacer(minLength: 8)
-            VStack(alignment: .trailing, spacing: 3) {
-                Text("\(percent(event.peakCPUPercent)) peak").fontWeight(.medium)
-                if let amount = eventEnergy(event) {
-                    Text(energy(amount)).font(.caption).foregroundStyle(.secondary)
-                }
-            }
-            Image(systemName: "chevron.right").font(.caption2)
-                .foregroundStyle(.secondary).accessibilityHidden(true)
-        }
-        .font(.callout)
-        .monospacedDigit()
-        .padding(8)
-        .background(.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 7))
-        .accessibilityElement(children: .combine)
-    }
-
-    private func incident(_ event: HighCPUEvent) -> some View {
-        VStack(alignment: .leading, spacing: 9) {
-            Button { selectedEvent = nil } label: { Label("Events", systemImage: "chevron.left") }
-                .buttonStyle(.borderless)
-            ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(event.forensics?.suspectedApp == nil
-                             ? (event.triggerApp == nil ? "Recorded process" : "Recorded app")
-                             : "Likely contributor")
-                            .font(.caption).foregroundStyle(.secondary)
-                        Text(eventName(event)).font(.title2.weight(.semibold)).lineLimit(2)
-                        Text(impactLabel(event)).font(.caption).foregroundStyle(.secondary)
-                        let summary = incidentSummary(event)
-                        if !summary.isEmpty { Text(summary).fontWeight(.medium) }
-                    }
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(event.startedAt.formatted(date: .abbreviated, time: .standard))
-                        Text(event.endReason == nil ? "Ongoing" :
-                            "Last high reading \(event.lastObservedAt.formatted(date: endDateStyle(event), time: .standard))")
-                        Text("\(event.observedDurationSeconds.formatted(.number.precision(.fractionLength(0)))) s · \(percent(event.peakCPUPercent)) \(event.triggerApp == nil ? "process peak" : "app CPU peak")")
-                    }
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    if let evidence = event.forensics {
-                        Text(evidence.basis == .aboveBaseline
-                             ? "Ranked by CPU increases or processes that appeared near the start."
-                             : "Ranked by measured CPU during the event. The earlier baseline is limited.")
-                            .font(.caption).foregroundStyle(.secondary)
-                        timeline(evidence)
-                        Text("CPU contributors").font(.subheadline.weight(.semibold))
-                        ForEach(evidence.topProcesses) { process in
-                            contributorRow(process)
-                        }
-                        if evidence.topProcesses.isEmpty {
-                            Text("No comparable process samples.").foregroundStyle(.secondary)
-                        }
-                        if let extra = evidence.suspectedAppExtraCPUWattHours {
-                            Text("\(energy(extra)) estimated above the likely contributor’s baseline")
-                                .font(.caption).foregroundStyle(.secondary)
-                        }
-                        if evidence.foregroundSamples + evidence.backgroundSamples > 0 {
-                            Text("\(evidence.backgroundSamples) of \(evidence.foregroundSamples + evidence.backgroundSamples) context samples outside the active app")
-                                .font(.caption).foregroundStyle(.secondary)
-                        }
-                        if let battery = evidence.batterySamples, let adapter = evidence.pluggedInSamples,
-                           battery + adapter > 0 {
-                            Text("\(battery) samples on battery · \(adapter) plugged in")
-                                .font(.caption).foregroundStyle(.secondary)
-                        }
-                    } else {
-                        Text("This recording has no comparative timeline.").foregroundStyle(.secondary)
-                        if let path = event.path { Text(path).textSelection(.enabled).foregroundStyle(.secondary) }
-                    }
-                    if let triggerApp = event.triggerApp {
-                        Text("Triggered by \(triggerApp.name) and its helpers")
-                            .font(.caption).foregroundStyle(.secondary)
-                        if event.incompleteAppSamples == true {
-                            Text("Some app members had no CPU reading. Totals use measured members.")
-                                .font(.caption).foregroundStyle(.secondary)
-                        }
-                    } else {
-                        Text("Trigger PID \(event.identity.pid) · \(event.name ?? eventName(event))")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                    if let reason = endLabel(event) {
-                        Text(reason).font(.caption).foregroundStyle(.secondary)
-                    }
-                    if let baseline = event.baselineCPUPercent, let threshold = event.triggerThresholdCPUPercent {
-                        Text("Usual CPU \(percent(baseline)) · detection threshold \(percent(threshold))")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                    Text("What to do").font(.subheadline.weight(.semibold))
-                    Text(advice(event)).foregroundStyle(.secondary)
-                    if let eventActionError { Text(eventActionError).foregroundStyle(.secondary) }
-                    Button(event.ignoredAt == nil ? "Ignore this event" : "Restore this event") {
-                        Task {
-                            do {
-                                try await model.setEventIgnored(event.id, ignored: event.ignoredAt == nil)
-                                eventActionError = nil
-                                if event.ignoredAt == nil { selectedEvent = nil }
-                                await refreshHistory()
-                            } catch {
-                                eventActionError = error.localizedDescription
-                            }
-                        }
-                    }
-                }
-                .font(.callout)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.trailing, 2)
-            }
-            .frame(maxHeight: 445)
-        }
-    }
-
-    private func contributorRow(_ item: ProcessContribution) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack {
-                Text(item.name).fontWeight(.medium).lineLimit(1)
-                Spacer()
-                Text(item.cpuShare.formatted(.percent.precision(.fractionLength(0))) + " of measured CPU")
-                    .font(.caption)
-            }
-            Text("PID \(item.identity.pid) · \(item.cpuEnergyWattHours.map(energy) ?? "CPU energy unavailable")")
-                .font(.caption).foregroundStyle(.secondary)
-            if let path = item.path {
-                Text(path).font(.caption2).foregroundStyle(.secondary)
-                    .textSelection(.enabled).lineLimit(2).help(path)
-            }
-        }
-        .padding(6)
-        .background(.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 6))
-    }
-
-    private func timeline(_ evidence: EventEvidence) -> some View {
-        let phases = [("Before", evidence.before), ("During", evidence.during), ("After", evidence.after)]
-        let maximum = max(100, phases.flatMap { $0.1 }.compactMap(\.measuredCPUPercent).max() ?? 0)
-        return VStack(alignment: .leading, spacing: 5) {
-            Text("Measured CPU timeline").font(.subheadline.weight(.semibold))
-            HStack(alignment: .top, spacing: 7) {
-                ForEach(phases, id: \.0) { phase in
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(phase.0).font(.caption)
-                        activityChart(phase.1, ceiling: maximum, color: phase.0 == "During" ? .orange : .accentColor)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-            }
-            if !evidence.afterComplete {
-                Text("Follow-up coverage is incomplete.").font(.caption).foregroundStyle(.secondary)
-            }
-        }
-    }
-
-    private func activityChart(_ points: [ActivityPoint], ceiling: Double, color: Color) -> some View {
-        let observed = chartPoints(points)
-        return Group {
-            if observed.isEmpty {
-                Text("No samples").font(.caption2).foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, minHeight: 38)
-            } else {
-                Chart {
-                    ForEach(observed, id: \.at) { point in
-                        LineMark(x: .value("Time", point.at), y: .value("Measured CPU %", point.cpu),
-                                 series: .value("Continuous samples", point.segment))
-                            .foregroundStyle(color)
-                        PointMark(x: .value("Time", point.at), y: .value("Measured CPU %", point.cpu))
-                            .foregroundStyle(color).symbolSize(7)
-                    }
-                }
-                .chartYScale(domain: 0...ceiling)
-                .chartXAxis(.hidden)
-                .chartYAxis(.hidden)
-                .frame(height: 38)
-            }
-        }
-    }
-
-    private func chartPoints(_ points: [ActivityPoint]) -> [(at: Date, cpu: Double, segment: Int)] {
-        var segment = 0
-        return points.compactMap { point in
-            guard let cpu = point.measuredCPUPercent else {
-                segment += 1
-                return nil
-            }
-            return (point.at, cpu, segment)
-        }
-    }
-
-    private func eventName(_ event: HighCPUEvent) -> String {
-        event.forensics?.suspectedApp?.name ?? event.triggerApp?.name ?? ProcessGroup(path: event.path)?.name ?? event.name
-            ?? "PID \(event.identity.pid)"
-    }
-
-    private func eventEnergy(_ event: HighCPUEvent) -> Double? {
-        if let evidence = event.forensics, evidence.suspectedApp != nil {
-            return evidence.suspectedAppCPUWattHours
-        }
-        return event.observedCPUEnergyWattHours
-    }
-
-    private func endDateStyle(_ event: HighCPUEvent) -> Date.FormatStyle.DateStyle {
-        Calendar.current.isDate(event.startedAt, inSameDayAs: event.lastObservedAt) ? .omitted : .abbreviated
-    }
-
-    private func incidentSummary(_ event: HighCPUEvent) -> String {
-        var parts: [String] = []
-        if let share = event.forensics?.suspectedAppCPUShare {
-            parts.append(share.formatted(.percent.precision(.fractionLength(0))) + " of measured CPU")
-        }
-        if let amount = eventEnergy(event) { parts.append(energy(amount) + " CPU") }
-        return parts.joined(separator: " · ")
-    }
-
-    private func impactRank(_ event: HighCPUEvent) -> Int {
-        switch event.forensics?.impact {
-        case .sustained: 3
-        case .review: 2
-        case .activity: 1
-        case nil: 0
-        }
-    }
-
-    private func impactLabel(_ event: HighCPUEvent) -> String {
-        if event.ignoredAt != nil { return "Ignored" }
-        switch event.forensics?.impact {
-        case .sustained: return "Sustained background activity"
-        case .review: return "Worth a look"
-        case .activity: return "Elevated activity"
-        case nil: return "Earlier recording"
-        }
-    }
-
-    private func endLabel(_ event: HighCPUEvent) -> String? {
-        switch event.endReason {
-        case .belowThreshold: "CPU fell below the detection threshold"
-        case .processExited, .processMissing:
-            event.triggerApp == nil ? "Process stopped appearing in samples" : "App group stopped appearing in samples"
-        case .processChanged:
-            event.triggerApp == nil ? "PID now belongs to a different process" : "No app member continued from the previous sample"
-        case .sampleUnavailable, .samplingGap, .clockChanged: "Monitoring lost continuous readings"
-        case .monitorStopped, .monitorInterrupted: "Recording stopped"
-        case nil: nil
-        }
-    }
-
-    private func advice(_ event: HighCPUEvent) -> String {
-        if event.forensics?.impact == .sustained {
-            return "Check whether the app is still busy in Live. If its work is unexpected, save your work and quit it normally."
-        }
-        return "If you expected this workload, ignore the event. If it recurs, use the process name and path to investigate."
+        .padding(.horizontal, Pulse.gutter)
+        .padding(.top, 13)
+        .padding(.bottom, 11)
     }
 
     private var footer: some View {
         HStack {
-            Button(action: openSettings) {
-                Label("Settings…", systemImage: "gearshape")
-            }
-            .keyboardShortcut(",", modifiers: .command)
-            .buttonStyle(.borderless)
+            Button("Settings…", action: openSettings)
+                .keyboardShortcut(",", modifiers: .command)
             Spacer()
-            Button("Quit CrashPulse") { NSApp.terminate(nil) }
-                .buttonStyle(.borderless)
+            Button("Quit") { NSApp.terminate(nil) }
                 .keyboardShortcut("q", modifiers: .command)
         }
-        .font(.callout)
-        .padding(.horizontal, 16)
-        .padding(.vertical, 11)
+        .buttonStyle(.borderless)
+        .font(Pulse.detail)
+        .padding(.horizontal, Pulse.gutter)
+        .padding(.vertical, 9)
+    }
+}
+
+// MARK: - Root
+
+struct MenuMonitorView: View {
+    @ObservedObject var model: MonitorModel
+    let openSettings: () -> Void
+
+    enum Tab: String, CaseIterable {
+        case events = "Events"
+        case live = "Live"
     }
 
-    private func notice(_ title: String, icon: String, message: String?) -> some View {
-        VStack(spacing: 7) {
-            Image(systemName: icon)
-                .font(.system(size: 23, weight: .light))
-                .foregroundStyle(.secondary)
-                .accessibilityHidden(true)
-            Text(title).font(.subheadline.weight(.semibold))
-            if let message {
-                Text(message).font(.caption).foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
+    @State private var tab: Tab
+    @State private var selectedEvent: UUID?
+    @State private var showIgnored = false
+    @State private var report: CPUHistoryReport?
+    @State private var historyReadError: String?
+    @State private var eventActionError: String?
+
+    init(model: MonitorModel, openSettings: @escaping () -> Void) {
+        self.model = model
+        self.openSettings = openSettings
+        _tab = State(initialValue: model.run.canRecordHistory ? .events : .live)
+    }
+
+    var body: some View {
+        PanelChrome(status: status, monitoring: model.monitoringEnabled, showsTabs: model.run.canRecordHistory,
+                    tab: $tab, historyError: model.historyError,
+                    onToggleMonitoring: { model.setMonitoring(!model.monitoringEnabled) },
+                    openSettings: openSettings) {
+            switch tab {
+            case .events: events
+            case .live:
+                LiveView(snapshot: model.snapshot, activity: model.activity, monitoring: model.monitoringEnabled,
+                         onResume: { model.setMonitoring(true) })
             }
         }
-        .frame(maxWidth: .infinity, minHeight: 84)
-        .padding(14)
+        .task(id: historyScan) {
+            if showsHistory { await refreshHistory() }
+        }
+    }
+
+    private var showsHistory: Bool { model.panelVisible && tab == .events }
+
+    private var historyScan: Date? {
+        showsHistory ? (model.snapshot?.sampledAt ?? .distantPast) : nil
+    }
+
+    private var status: PanelStatus {
+        if !model.monitoringEnabled { return PanelStatus(text: "Paused", color: .secondary) }
+        guard let snapshot = model.snapshot else { return PanelStatus(text: "Starting", color: .secondary) }
+        if snapshot.enumerationIssue != nil { return PanelStatus(text: "No process access", color: Pulse.signal) }
+        switch snapshot.powerSupply {
+        case .battery: return PanelStatus(text: "Watching, on battery", color: Pulse.watching)
+        case .adapter: return PanelStatus(text: "Watching, plugged in", color: Pulse.watching)
+        case .ups: return PanelStatus(text: "Watching, on UPS", color: Pulse.watching)
+        case nil: return PanelStatus(text: "Watching", color: Pulse.watching)
+        }
+    }
+
+    @ViewBuilder
+    private var events: some View {
+        if let report {
+            if let selectedEvent, let event = report.events.first(where: { $0.id == selectedEvent }) {
+                EventDetailView(event: event, actionError: eventActionError,
+                                onBack: { self.selectedEvent = nil },
+                                onOpenLive: { tab = .live },
+                                onToggleIgnored: { Task { await toggleIgnored(event) } })
+            } else {
+                EventListView(report: report, showIgnored: $showIgnored,
+                              notice: historyReadError ?? eventActionError,
+                              onSelect: { selectedEvent = $0.id },
+                              onToggleIgnored: { event in Task { await toggleIgnored(event) } })
+            }
+        } else if let historyReadError {
+            PanelMessage(symbol: "exclamationmark.triangle", title: "Events can’t be read", message: historyReadError)
+        } else {
+            ProgressView().controlSize(.small).frame(maxWidth: .infinity, minHeight: 120)
+        }
+    }
+
+    private func toggleIgnored(_ event: HighCPUEvent) async {
+        do {
+            try await model.setEventIgnored(event.id, ignored: event.ignoredAt == nil)
+            eventActionError = nil
+            if event.ignoredAt == nil, selectedEvent == event.id, !showIgnored { selectedEvent = nil }
+            await refreshHistory()
+        } catch {
+            eventActionError = error.localizedDescription
+        }
     }
 
     private func refreshHistory() async {
@@ -788,29 +372,694 @@ struct MenuMonitorView: View {
             historyReadError = error.localizedDescription
         }
     }
+}
 
-    private func processName(_ row: ProcessRow) -> String {
-        row.name ?? row.path.map { ($0 as NSString).lastPathComponent } ?? "PID \(row.pid)"
+// MARK: - Event list
+
+struct EventListView: View {
+    let report: CPUHistoryReport
+    @Binding var showIgnored: Bool
+    var notice: String?
+    let onSelect: (HighCPUEvent) -> Void
+    let onToggleIgnored: (HighCPUEvent) -> Void
+
+    private struct Day: Identifiable {
+        let id: Date
+        let events: [HighCPUEvent]
     }
 
-    private func processDetails(_ row: ProcessRow) -> String {
-        let detail = row.footprintBytes.map { memoryStyle.format(Int64(clamping: $0)) } ?? row.state.label
-        return "PID \(row.pid) · \(detail)"
+    private var days: [Day] {
+        let calendar = Calendar.current
+        let visible = report.events
+            .filter { showIgnored || $0.ignoredAt == nil }
+            .sorted { $0.startedAt == $1.startedAt ? $0.id.uuidString < $1.id.uuidString : $0.startedAt > $1.startedAt }
+        let grouped = Dictionary(grouping: visible) { calendar.startOfDay(for: $0.startedAt) }
+        return grouped.keys.sorted(by: >).map { Day(id: $0, events: grouped[$0] ?? []) }
     }
 
-    private func percent(_ value: Double) -> String {
-        value.formatted(.number.precision(.fractionLength(1))) + "%"
+    var body: some View {
+        let days = days
+        VStack(alignment: .leading, spacing: 0) {
+            if let pattern = report.recurringBackgroundActivity.first {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                        .font(Pulse.captionStrong)
+                        .foregroundStyle(Pulse.severe)
+                    Text("\(pattern.app.name) spiked in the background on \(pattern.days) separate days.")
+                        .font(Pulse.detail)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Pulse.severe.opacity(0.09), in: RoundedRectangle(cornerRadius: 8))
+                .padding(.horizontal, Pulse.gutter - 4)
+                .padding(.top, 12)
+            }
+            if let notice {
+                Text(notice)
+                    .font(Pulse.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, Pulse.gutter)
+                    .padding(.top, 10)
+            }
+            if days.isEmpty {
+                PanelMessage(symbol: "waveform.path.ecg", title: "No CPU spikes yet",
+                             message: "CrashPulse records any app that keeps the CPU busy for 30 seconds or more.")
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(days) { day in
+                            Text(Self.dayTitle(day.id))
+                                .font(Pulse.captionStrong)
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, Pulse.gutter)
+                                .padding(.top, 12)
+                                .padding(.bottom, 4)
+                            ForEach(day.events) { event in
+                                EventRow(story: EventStory(event: event), onSelect: { onSelect(event) })
+                                    .contextMenu {
+                                        Button(event.ignoredAt == nil ? "Ignore This Event" : "Restore This Event") {
+                                            onToggleIgnored(event)
+                                        }
+                                    }
+                            }
+                        }
+                    }
+                    .padding(.horizontal, Pulse.gutter - 8)
+                    .padding(.bottom, 8)
+                }
+                .frame(maxHeight: 380)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+            if report.events.contains(where: { $0.ignoredAt != nil }) {
+                Toggle("Show ignored events", isOn: $showIgnored)
+                    .toggleStyle(.checkbox)
+                    .font(Pulse.caption)
+                    .padding(.horizontal, Pulse.gutter)
+                    .padding(.bottom, 10)
+            }
+        }
     }
 
-    private func power(_ watts: Double) -> String {
-        if watts >= 1 { return watts.formatted(.number.precision(.fractionLength(2))) + " W" }
-        if watts > 0 && watts < 0.001 { return "<1 mW" }
-        return (watts * 1_000).formatted(.number.precision(.fractionLength(0))) + " mW"
+    private static func dayTitle(_ day: Date) -> String {
+        let calendar = Calendar.current
+        if calendar.isDateInToday(day) { return "Today" }
+        if calendar.isDateInYesterday(day) { return "Yesterday" }
+        return day.formatted(.dateTime.weekday(.wide).month(.abbreviated).day())
+    }
+}
+
+private struct EventRow: View {
+    let story: EventStory
+    let onSelect: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        let severity = story.severity
+        Button(action: onSelect) {
+            HStack(spacing: 10) {
+                Circle()
+                    .fill(severity.color)
+                    .frame(width: 7, height: 7)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(story.appName).font(Pulse.bodyStrong).lineLimit(1)
+                    Text(story.listSubtitle).font(Pulse.caption).foregroundStyle(.secondary).lineLimit(1)
+                }
+                Spacer(minLength: 8)
+                Sparkline(values: story.sparkline)
+                    .stroke(severity.traceColor, style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
+                    .frame(width: 52, height: 18)
+                    .opacity(story.sparkline.isEmpty ? 0 : 1)
+                    .accessibilityHidden(true)
+                VStack(alignment: .trailing, spacing: 1) {
+                    Text(PulseFormat.percent(story.event.peakCPUPercent))
+                        .font(.system(size: 13, weight: .medium).monospacedDigit())
+                    Text("peak").font(Pulse.caption).foregroundStyle(.tertiary)
+                }
+                .frame(minWidth: 40, alignment: .trailing)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+                    .accessibilityHidden(true)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 7)
+            .background(hovering ? Color.primary.opacity(0.07) : Color.clear, in: RoundedRectangle(cornerRadius: 6))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .opacity(severity == .ignored ? 0.55 : 1)
+        .onHover { hovering = $0 }
+        .accessibilityLabel("\(story.appName), \(severity.label), \(story.listSubtitle), peak \(PulseFormat.percent(story.event.peakCPUPercent))")
+    }
+}
+
+/// A lightweight line for list rows. Charts would be too heavy for hundreds of rows.
+struct Sparkline: Shape {
+    let values: [Double?]
+
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        guard values.count > 1 else { return path }
+        let ceiling = max(100, values.compactMap { $0 }.max() ?? 0)
+        let step = rect.width / CGFloat(values.count - 1)
+        var drawing = false
+        for (index, value) in values.enumerated() {
+            guard let value else { drawing = false; continue }
+            let point = CGPoint(x: rect.minX + CGFloat(index) * step,
+                                y: rect.maxY - CGFloat(min(value, ceiling) / ceiling) * rect.height)
+            if drawing { path.addLine(to: point) } else { path.move(to: point) }
+            drawing = true
+        }
+        return path
+    }
+}
+
+// MARK: - Event detail
+
+struct EventDetailView: View {
+    let event: HighCPUEvent
+    var actionError: String?
+    let onBack: () -> Void
+    let onOpenLive: () -> Void
+    let onToggleIgnored: () -> Void
+
+    var body: some View {
+        let story = EventStory(event: event)
+        let severity = story.severity
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                Button(action: onBack) {
+                    Label("Events", systemImage: "chevron.left").font(Pulse.detail)
+                }
+                .buttonStyle(.borderless)
+                .padding(.bottom, 14)
+
+                // First priority: who, and how serious.
+                Text(severity.label)
+                    .font(Pulse.captionStrong)
+                    .foregroundStyle(severity.color)
+                    .padding(.bottom, 3)
+                Text(story.appName)
+                    .font(Pulse.title)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.bottom, 6)
+                Text(story.summary)
+                    .font(Pulse.body)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.bottom, 16)
+
+                // Second: what happened over time.
+                if let evidence = event.forensics, !(evidence.before + evidence.during + evidence.after).isEmpty {
+                    PulseTrace(event: event, evidence: evidence, appName: story.appName, color: severity.traceColor)
+                        .padding(.bottom, 16)
+                } else {
+                    Text("No timeline was recorded. This event is from before CrashPulse kept timelines.")
+                        .font(Pulse.detail)
+                        .foregroundStyle(.secondary)
+                        .padding(.bottom, 16)
+                }
+
+                figures(story)
+                    .padding(.bottom, 18)
+
+                // Third: what to do about it.
+                if severity != .unknown {
+                    Text("What you can do").font(Pulse.bodyStrong).padding(.bottom, 4)
+                    Text(story.advice)
+                        .font(Pulse.body)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if severity == .now {
+                    Button("Open Live", action: onOpenLive)
+                        .controlSize(.small)
+                        .padding(.top, 8)
+                }
+
+                // Fourth: supporting detail.
+                if let processes = processes(story) {
+                    Text("Processes involved")
+                        .font(Pulse.captionStrong)
+                        .foregroundStyle(.secondary)
+                        .padding(.top, 20)
+                        .padding(.bottom, 6)
+                    VStack(spacing: 6) {
+                        ForEach(processes) { process in
+                            ProcessShareRow(process: process, color: severity.traceColor)
+                        }
+                    }
+                }
+
+                Text(story.timeNote)
+                    .font(Pulse.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, severity == .unknown ? 0 : 18)
+                HStack {
+                    Button(event.ignoredAt == nil ? "Ignore this event" : "Restore this event",
+                           systemImage: event.ignoredAt == nil ? "eye.slash" : "eye",
+                           action: onToggleIgnored)
+                        .buttonStyle(.borderless)
+                        .font(Pulse.caption)
+                        .help("Ignored events stay in history but no longer count toward patterns.")
+                    if let actionError {
+                        Text(actionError).font(Pulse.caption).foregroundStyle(Pulse.signal).lineLimit(2)
+                    }
+                }
+                .padding(.top, 8)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, Pulse.gutter)
+            .padding(.top, 12)
+            .padding(.bottom, 14)
+        }
+        .frame(maxHeight: 640)
+        .fixedSize(horizontal: false, vertical: true)
     }
 
-    private func energy(_ wattHours: Double) -> String {
-        if wattHours > 0 && wattHours < 0.001 { return "<0.001 Wh" }
-        return wattHours.formatted(.number.precision(.fractionLength(0...3))) + " Wh"
+    private func figures(_ story: EventStory) -> some View {
+        HStack(alignment: .top, spacing: 0) {
+            figure(PulseFormat.duration(event.observedDurationSeconds), event.endReason == nil ? "So far" : "Duration")
+            figure(PulseFormat.percent(event.peakCPUPercent), "Peak CPU")
+            if let energy = story.energy {
+                figure(PulseFormat.energy(energy), "CPU energy")
+                    .help("Energy used by the CPU for this app during the event. It excludes the display and GPU.")
+            } else if let share = event.forensics?.suspectedAppCPUShare {
+                figure(share.formatted(.percent.precision(.fractionLength(0))), "Share of CPU")
+            }
+        }
+    }
+
+    private func figure(_ value: String, _ label: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(value).font(Pulse.figure).lineLimit(1).minimumScaleFactor(0.8)
+            Text(label).font(Pulse.caption).foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+    }
+
+    /// Hidden when the only process is the app itself, which the title already says.
+    private func processes(_ story: EventStory) -> [ProcessContribution]? {
+        guard let top = event.forensics?.topProcesses, !top.isEmpty else { return nil }
+        if top.count == 1, top[0].name == story.appName { return nil }
+        return top
+    }
+}
+
+private struct ProcessShareRow: View {
+    let process: ProcessContribution
+    let color: Color
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(process.name)
+                .font(Pulse.detail)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .help(process.path ?? process.name)
+            Spacer(minLength: 8)
+            ShareBar(fraction: process.cpuShare, color: color.opacity(0.7))
+                .frame(width: 56, height: 4)
+            Text(process.cpuShare.formatted(.percent.precision(.fractionLength(0))))
+                .font(Pulse.detail.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .frame(width: 36, alignment: .trailing)
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+private struct ShareBar: View {
+    let fraction: Double
+    let color: Color
+
+    var body: some View {
+        GeometryReader { proxy in
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.primary.opacity(0.08))
+                Capsule().fill(color)
+                    .frame(width: max(2, proxy.size.width * CGFloat(min(max(fraction, 0), 1))))
+            }
+        }
+        .accessibilityHidden(true)
+    }
+}
+
+// MARK: - Pulse trace
+
+/// The before, during and after readings as one continuous strip, with the event span tinted.
+struct PulseTrace: View {
+    let event: HighCPUEvent
+    let evidence: EventEvidence
+    let appName: String
+    let color: Color
+
+    private struct Point: Identifiable {
+        let id: Int
+        let at: Date
+        let value: Double
+        let segment: Int
+    }
+
+    private static func points(_ source: [ActivityPoint], value: (ActivityPoint) -> Double?) -> [Point] {
+        var segment = 0
+        var result: [Point] = []
+        for (index, point) in source.enumerated() {
+            guard let reading = value(point) else { segment += 1; continue }
+            result.append(Point(id: index, at: point.at, value: reading, segment: segment))
+        }
+        return result
+    }
+
+    var body: some View {
+        let source = (evidence.before + evidence.during + evidence.after).sorted { $0.at < $1.at }
+        let app = Self.points(source) { $0.triggerCPUPercent }
+        let all = Self.points(source) { $0.measuredCPUPercent }
+        let top = max(100, (app + all).map(\.value).max() ?? 0)
+        let ceiling = (top / 100).rounded(.up) * 100
+        let start = event.startedAt
+        let end = max(event.lastObservedAt, start.addingTimeInterval(1))
+        let first = min(source.first?.at ?? start, start)
+        let last = max(source.last?.at ?? end, end)
+
+        VStack(alignment: .leading, spacing: 6) {
+            Chart {
+                RectangleMark(xStart: .value("Start", start), xEnd: .value("End", end))
+                    .foregroundStyle(color.opacity(0.07))
+                ForEach(all) { point in
+                    LineMark(x: .value("Time", point.at), y: .value("All apps", point.value),
+                             series: .value("Series", "all-\(point.segment)"))
+                        .foregroundStyle(Color.secondary.opacity(0.55))
+                        .lineStyle(StrokeStyle(lineWidth: 1, lineCap: .round, lineJoin: .round))
+                        .interpolationMethod(.monotone)
+                }
+                ForEach(app) { point in
+                    LineMark(x: .value("Time", point.at), y: .value(appName, point.value),
+                             series: .value("Series", "app-\(point.segment)"))
+                        .foregroundStyle(color)
+                        .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
+                        .interpolationMethod(.monotone)
+                }
+            }
+            .chartXScale(domain: first...last)
+            .chartYScale(domain: 0...ceiling)
+            .chartXAxis {
+                AxisMarks(values: [start, end]) { _ in
+                    AxisTick(length: 4).foregroundStyle(Color.secondary.opacity(0.5))
+                }
+            }
+            .chartYAxis {
+                AxisMarks(position: .trailing, values: [0, ceiling / 2, ceiling]) { value in
+                    AxisGridLine().foregroundStyle(Color.primary.opacity(0.06))
+                    AxisValueLabel {
+                        if let number = value.as(Double.self) {
+                            Text(PulseFormat.percent(number)).font(.system(size: 9)).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+            .frame(height: 96)
+            .accessibilityLabel("CPU use before, during and after the event")
+
+            HStack(spacing: 12) {
+                legend(line: true, text: appName)
+                legend(line: false, text: "All apps")
+                Spacer()
+                HStack(spacing: 5) {
+                    RoundedRectangle(cornerRadius: 2).fill(color.opacity(0.18)).frame(width: 12, height: 8)
+                    Text("Event").font(Pulse.caption).foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    private func legend(line: Bool, text: String) -> some View {
+        HStack(spacing: 5) {
+            Capsule().fill(line ? color : Color.secondary.opacity(0.55)).frame(width: 12, height: line ? 2 : 1)
+            Text(text).font(Pulse.caption).foregroundStyle(.secondary).lineLimit(1)
+        }
+    }
+}
+
+// MARK: - Live
+
+struct LiveView: View {
+    let snapshot: Snapshot?
+    let activity: [ActivityPoint]
+    let monitoring: Bool
+    let onResume: () -> Void
+
+    private enum Order: String, CaseIterable {
+        case power = "Power"
+        case cpu = "CPU"
+    }
+
+    @State private var order = Order.power
+    @State private var showingAll = false
+    @State private var search = ""
+    @State private var expanded: Set<String> = []
+
+    var body: some View {
+        if !monitoring {
+            PanelMessage(symbol: "pause.circle", title: "Monitoring is paused",
+                         message: "Resume to see which apps are using the CPU now.",
+                         action: ("Resume", onResume))
+        } else if let snapshot, let issue = snapshot.enumerationIssue {
+            PanelMessage(symbol: "lock", title: "Can’t read the process list",
+                         message: issue.category == .permissionDenied
+                            ? "macOS denied access to other processes." : "CrashPulse will try again on the next scan.")
+        } else if let snapshot, snapshot.coverage.cpu > 0 {
+            content(snapshot)
+        } else {
+            PanelMessage(symbol: "waveform", title: "Taking the first readings",
+                         message: "CPU use appears after two samples.")
+        }
+    }
+
+    private struct AppUsage: Identifiable {
+        var id: String { app.id }
+        let app: ProcessGroup
+        let rows: [ProcessRow]
+        let cpu: Double?
+        let watts: Double?
+
+        init(app: ProcessGroup, rows: [ProcessRow]) {
+            self.app = app
+            self.rows = rows.sorted { ($0.cpuPercent ?? -1) > ($1.cpuPercent ?? -1) }
+            let percentages = rows.compactMap(\.cpuPercent)
+            let measuredWatts = rows.compactMap { $0.cpuPower?.watts }
+            cpu = percentages.isEmpty ? nil : percentages.reduce(0, +)
+            watts = measuredWatts.isEmpty ? nil : measuredWatts.reduce(0, +)
+        }
+    }
+
+    private func content(_ snapshot: Snapshot) -> some View {
+        let hasPower = snapshot.rows.contains { $0.cpuPower != nil }
+        let effective: Order = hasPower ? order : .cpu
+        let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
+        let groups = Dictionary(grouping: snapshot.rows, by: { ProcessGroup(row: $0).id }).values
+            .compactMap { rows -> AppUsage? in
+                guard let first = rows.first else { return nil }
+                let app = ProcessGroup(row: first)
+                if showingAll, !query.isEmpty {
+                    guard app.name.localizedStandardContains(query) || rows.contains(where: {
+                        ($0.name ?? "").localizedStandardContains(query) || String($0.pid).contains(query)
+                    }) else { return nil }
+                }
+                let group = AppUsage(app: app, rows: rows)
+                return showingAll || (effective == .power ? group.watts != nil : group.cpu != nil) ? group : nil
+            }
+            .sorted {
+                let left = (effective == .power ? $0.watts : $0.cpu) ?? -1
+                let right = (effective == .power ? $1.watts : $1.cpu) ?? -1
+                return left == right ? $0.id < $1.id : left > right
+            }
+        let shown = showingAll ? groups : Array(groups.prefix(7))
+        let scale = shown.compactMap { effective == .power ? $0.watts : $0.cpu }.max() ?? 1
+
+        return VStack(alignment: .leading, spacing: 0) {
+            if !showingAll { trend.padding(.bottom, 14) }
+            HStack {
+                if showingAll {
+                    Button {
+                        showingAll = false
+                        search = ""
+                        expanded.removeAll()
+                    } label: { Label("Top apps", systemImage: "chevron.left").font(Pulse.detail) }
+                    .buttonStyle(.borderless)
+                } else {
+                    Text("Top apps now").font(Pulse.bodyStrong)
+                }
+                Spacer()
+                Picker("Sort by", selection: Binding(get: { effective }, set: { order = $0 })) {
+                    ForEach(Order.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .controlSize(.small)
+                .fixedSize()
+                .disabled(!hasPower)
+                .help(hasPower ? "Rank apps by CPU power or CPU use" : "CPU power isn’t available on this Mac")
+            }
+            .padding(.bottom, 8)
+            if showingAll {
+                TextField("Search apps, processes or PIDs", text: $search)
+                    .textFieldStyle(.roundedBorder)
+                    .controlSize(.small)
+                    .padding(.bottom, 8)
+            }
+            if shown.isEmpty {
+                Text("No matching apps").font(Pulse.detail).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, minHeight: 60)
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        ForEach(shown) { group in
+                            row(group, order: effective, scale: scale)
+                        }
+                    }
+                }
+                .frame(maxHeight: showingAll ? 300 : 236)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+            if !showingAll {
+                Button("All apps and processes") { showingAll = true }
+                    .buttonStyle(.borderless)
+                    .font(Pulse.detail)
+                    .padding(.top, 8)
+            }
+        }
+        .padding(.horizontal, Pulse.gutter)
+        .padding(.vertical, 14)
+    }
+
+    private var trend: some View {
+        let points = activity.compactMap { point in point.measuredCPUPercent.map { (at: point.at, cpu: $0) } }
+        let ceiling = max(100, ((points.map(\.cpu).max() ?? 0) / 100).rounded(.up) * 100)
+        return VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(points.last.map { PulseFormat.percent($0.cpu) } ?? "—").font(Pulse.figure)
+                    Text("All apps, last 3 minutes").font(Pulse.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+            if points.count > 1 {
+                Chart(points, id: \.at) { point in
+                    AreaMark(x: .value("Time", point.at), y: .value("CPU", point.cpu))
+                        .foregroundStyle(Color.accentColor.opacity(0.14))
+                        .interpolationMethod(.monotone)
+                    LineMark(x: .value("Time", point.at), y: .value("CPU", point.cpu))
+                        .foregroundStyle(Color.accentColor)
+                        .lineStyle(StrokeStyle(lineWidth: 1.5))
+                        .interpolationMethod(.monotone)
+                }
+                .chartYScale(domain: 0...ceiling)
+                .chartXAxis(.hidden)
+                .chartYAxis {
+                    AxisMarks(position: .trailing, values: [0, ceiling]) { value in
+                        AxisGridLine().foregroundStyle(Color.primary.opacity(0.06))
+                        AxisValueLabel {
+                            if let number = value.as(Double.self) {
+                                Text(PulseFormat.percent(number)).font(.system(size: 9)).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+                .frame(height: 54)
+            }
+        }
+    }
+
+    private func row(_ group: AppUsage, order: Order, scale: Double) -> some View {
+        let value = order == .power ? group.watts : group.cpu
+        let isOpen = expanded.contains(group.id)
+        return VStack(spacing: 0) {
+            Button {
+                if isOpen { expanded.remove(group.id) } else { expanded.insert(group.id) }
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.tertiary)
+                        .rotationEffect(.degrees(isOpen ? 90 : 0))
+                        .frame(width: 10)
+                    Text(group.app.name).font(Pulse.body).lineLimit(1)
+                    Spacer(minLength: 6)
+                    ShareBar(fraction: (value ?? 0) / max(scale, 0.0001), color: Color.accentColor.opacity(0.75))
+                        .frame(width: 44, height: 4)
+                    Text(group.cpu.map(PulseFormat.precisePercent) ?? "—")
+                        .font(Pulse.detail.monospacedDigit())
+                        .foregroundStyle(order == .cpu ? .primary : .secondary)
+                        .frame(width: 50, alignment: .trailing)
+                    Text(group.watts.map(PulseFormat.power) ?? "—")
+                        .font(Pulse.detail.monospacedDigit())
+                        .foregroundStyle(order == .power ? .primary : .secondary)
+                        .frame(width: 58, alignment: .trailing)
+                }
+                .padding(.vertical, 6)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            if isOpen {
+                VStack(spacing: 4) {
+                    ForEach(group.rows) { process in
+                        HStack(spacing: 8) {
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(process.name ?? process.path.map { ($0 as NSString).lastPathComponent } ?? "PID \(process.pid)")
+                                    .font(Pulse.detail).lineLimit(1).truncationMode(.middle)
+                                Text("PID \(process.pid)").font(Pulse.caption).foregroundStyle(.secondary)
+                            }
+                            Spacer(minLength: 6)
+                            Text(process.cpuPercent.map(PulseFormat.precisePercent) ?? "—")
+                                .frame(width: 50, alignment: .trailing)
+                            Text(process.cpuPower.map { PulseFormat.power($0.watts) } ?? "—")
+                                .frame(width: 58, alignment: .trailing)
+                        }
+                        .font(Pulse.detail.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.leading, 18)
+                .padding(.bottom, 6)
+            }
+        }
+    }
+}
+
+// MARK: - Messages
+
+struct PanelMessage: View {
+    let symbol: String
+    let title: String
+    var message: String? = nil
+    var action: (String, () -> Void)? = nil
+
+    var body: some View {
+        VStack(spacing: 6) {
+            Image(systemName: symbol)
+                .font(.system(size: 22, weight: .light))
+                .foregroundStyle(.secondary)
+                .padding(.bottom, 2)
+                .accessibilityHidden(true)
+            Text(title).font(Pulse.bodyStrong)
+            if let message {
+                Text(message)
+                    .font(Pulse.detail)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let action {
+                Button(action.0, action: action.1).controlSize(.small).padding(.top, 4)
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 120)
+        .padding(.horizontal, 28)
+        .padding(.vertical, 18)
     }
 }
 
@@ -912,3 +1161,166 @@ private struct JSONDocument: FileDocument {
         FileWrapper(regularFileWithContents: data)
     }
 }
+
+#if DEBUG
+// MARK: - Debug preview renderer
+
+/// `CrashPulseOff --render-ui OUTPUT_DIR [HISTORY_DIR]` writes PNGs of each panel state in light and dark
+/// appearance, using sample events and a live process scan. Debug builds only.
+enum UIPreviewRenderer {
+    @MainActor
+    static func run(_ arguments: [String]) -> Int32 {
+        guard let output = arguments.first else {
+            FileHandle.standardError.write(Data("Usage: --render-ui OUTPUT_DIR [HISTORY_DIR]\n".utf8))
+            return EX_USAGE
+        }
+        let app = NSApplication.shared
+        app.setActivationPolicy(.prohibited)
+        let directory = URL(fileURLWithPath: output, isDirectory: true)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+
+        let now = Date()
+        var events = PreviewData.events(now: now)
+        if arguments.count > 1,
+           let real = try? CPUHistoryStore(directory: URL(fileURLWithPath: arguments[1], isDirectory: true),
+                                           policy: HighCPUPolicy()).report(now: now) {
+            events += real.events
+        }
+        let browser = ProcessGroup(path: "/Applications/Arc.app/Contents/MacOS/Arc")!
+        let report = CPUHistoryReport(generatedAt: now, policy: HighCPUPolicy(), events: events, batteryToday: nil,
+                                      recurringBackgroundActivity: [RecurringActivity(app: PreviewData.indexer, events: 3, days: 3)])
+        _ = browser
+
+        var collector = ProcessCollector()
+        _ = collector.collect()
+        Thread.sleep(forTimeInterval: 1.5)
+        let snapshot = collector.collect()
+        let activity = PreviewData.activity(now: now)
+
+        let watching = PanelStatus(text: "Watching, plugged in", color: Pulse.watching)
+        func panel<V: View>(_ tab: MenuMonitorView.Tab, @ViewBuilder _ content: () -> V) -> some View {
+            PanelChrome(status: watching, monitoring: true, showsTabs: true, tab: .constant(tab),
+                        onToggleMonitoring: {}, openSettings: {}, content: content)
+        }
+
+        var scenes: [(String, AnyView)] = [
+            ("1-events", AnyView(panel(.events) {
+                EventListView(report: report, showIgnored: .constant(false), onSelect: { _ in }, onToggleIgnored: { _ in })
+            })),
+            ("6-live", AnyView(panel(.live) {
+                LiveView(snapshot: snapshot, activity: activity, monitoring: true, onResume: {})
+            })),
+            ("7-empty", AnyView(panel(.events) {
+                EventListView(report: CPUHistoryReport(generatedAt: now, policy: HighCPUPolicy(), events: [],
+                                                       batteryToday: nil, recurringBackgroundActivity: []),
+                              showIgnored: .constant(false), onSelect: { _ in }, onToggleIgnored: { _ in })
+            })),
+        ]
+        for (index, event) in events.prefix(4).enumerated() {
+            scenes.append(("\(index + 2)-detail", AnyView(panel(.events) {
+                EventDetailView(event: event, onBack: {}, onOpenLive: {}, onToggleIgnored: {})
+            })))
+        }
+
+        for (name, view) in scenes {
+            for (suffix, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
+                let url = directory.appendingPathComponent("\(name)-\(suffix).png")
+                if !render(view, appearance: appearance, to: url) {
+                    FileHandle.standardError.write(Data("Could not render \(url.lastPathComponent)\n".utf8))
+                    return EXIT_FAILURE
+                }
+            }
+        }
+        print(directory.path)
+        return EXIT_SUCCESS
+    }
+
+    @MainActor
+    private static func render(_ view: AnyView, appearance: NSAppearance.Name, to url: URL) -> Bool {
+        let host = NSHostingView(rootView: view
+            .background(Color(nsColor: .windowBackgroundColor))
+            .environment(\.colorScheme, appearance == .darkAqua ? .dark : .light))
+        host.appearance = NSAppearance(named: appearance)
+        let size = host.fittingSize
+        host.frame = NSRect(origin: .zero, size: size)
+        let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.appearance = NSAppearance(named: appearance)
+        window.contentView = host
+        host.layoutSubtreeIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.4))
+        guard let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return false }
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        guard let data = bitmap.representation(using: .png, properties: [:]) else { return false }
+        return (try? data.write(to: url)) != nil
+    }
+}
+
+private enum PreviewData {
+    static let indexer = ProcessGroup(path: "/System/Library/Frameworks/CoreServices.framework/Frameworks/Metadata.framework/Versions/A/Support/mds_stores")!
+
+    static func activity(now: Date) -> [ActivityPoint] {
+        (0..<36).map { index in
+            let wave = 40 + 25 * sin(Double(index) / 4) + (index > 26 ? 90 : 0)
+            return ActivityPoint(at: now.addingTimeInterval(Double(index - 35) * 5), measuredCPUPercent: wave,
+                                 triggerCPUPercent: nil)
+        }
+    }
+
+    static func events(now: Date) -> [HighCPUEvent] {
+        [
+            make(now: now, minutesAgo: 1, seconds: 95, ended: false, impact: .review, fg: 0, bg: 12,
+                 path: "/Applications/Docker.app/Contents/MacOS/com.docker.backend", base: 6, level: 160,
+                 energy: nil, processes: [("com.docker.backend", 0.71), ("qemu-system-aarch64", 0.22), ("vpnkit", 0.03)]),
+            make(now: now, minutesAgo: 42, seconds: 250, ended: true, impact: .sustained, fg: 2, bg: 40,
+                 path: "/Applications/Arc.app/Contents/Frameworks/ArcCore.framework/Helpers/Browser Helper (Renderer).app/Contents/MacOS/Browser Helper (Renderer)",
+                 base: 12, level: 240, energy: 0.0182,
+                 processes: [("Browser Helper (Renderer)", 0.58), ("Browser Helper (GPU)", 0.19), ("Arc", 0.11)]),
+            make(now: now, minutesAgo: 190, seconds: 64, ended: true, impact: .activity, fg: 11, bg: 1,
+                 path: "/Applications/Xcode.app/Contents/MacOS/Xcode", base: 20, level: 310, energy: 0.0061,
+                 processes: [("swift-frontend", 0.64), ("Xcode", 0.21), ("clang", 0.08)]),
+            make(now: now, minutesAgo: 60 * 26, seconds: 41, ended: true, impact: nil, fg: 0, bg: 0,
+                 path: indexer.id, base: 0, level: 95, energy: nil, processes: []),
+        ]
+    }
+
+    private static func make(now: Date, minutesAgo: Double, seconds: Double, ended: Bool,
+                             impact: EventEvidence.Impact?, fg: Int, bg: Int, path: String,
+                             base: Double, level: Double, energy: Double?,
+                             processes: [(String, Double)]) -> HighCPUEvent {
+        let start = now.addingTimeInterval(-minutesAgo * 60)
+        let end = start.addingTimeInterval(seconds)
+        let identity = ProcessIdentity(pid: Int32(400 + Int(minutesAgo)), startSeconds: 1_800_000_000, startMicroseconds: 0)
+        let app = ProcessGroup(path: path)!
+        var event = HighCPUEvent(id: UUID(), identity: identity, processStartTicks: 1,
+                                 name: (path as NSString).lastPathComponent, path: path,
+                                 startedAt: start, lastObservedAt: end, observedDurationSeconds: seconds,
+                                 peakCPUPercent: level * 1.06, endReason: ended ? .processExited : nil)
+        event.observedCPUEnergyWattHours = energy
+        guard let impact else { return event }
+        func point(_ offset: Double, _ value: Double) -> ActivityPoint {
+            ActivityPoint(at: start.addingTimeInterval(offset), measuredCPUPercent: value + 35 + Double(Int(offset) % 3) * 6,
+                          triggerCPUPercent: value)
+        }
+        let before = stride(from: -30.0, to: 0, by: 5).map { point($0, base + Double(Int($0) % 2) * 3) }
+        let during = stride(from: 5.0, through: seconds, by: 5).map { offset -> ActivityPoint in
+            let ramp = min(1, offset / 15)
+            return point(offset, base + (level - base) * ramp * (0.9 + 0.1 * sin(offset / 7)))
+        }
+        let after = ended ? stride(from: 5.0, through: 15, by: 5).map { point(seconds + $0, base * 1.2) } : []
+        let contributions = processes.enumerated().map { index, item in
+            ProcessContribution(identity: ProcessIdentity(pid: Int32(900 + index), startSeconds: 1, startMicroseconds: 0),
+                                processStartTicks: UInt64(index), name: item.0, path: path, app: app,
+                                firstObservedAt: start, lastObservedAt: end, observedSeconds: seconds,
+                                cpuCoreSeconds: seconds * item.1, cpuShare: item.1,
+                                cpuEnergyWattHours: nil, energyObservedSeconds: 0)
+        }
+        event.forensics = EventEvidence(suspectedApp: app, basis: .aboveBaseline, impact: impact,
+                                        topProcesses: contributions, suspectedAppCPUShare: processes.first.map { _ in 0.86 },
+                                        suspectedAppCPUWattHours: energy, measuredCPUCoreSeconds: seconds * level / 100,
+                                        measuredCPUWattHours: energy, estimatedExtraCPUWattHours: energy,
+                                        foregroundSamples: fg, backgroundSamples: bg,
+                                        before: before, during: during, after: after, afterComplete: ended)
+        return event
+    }
+}
+#endif
