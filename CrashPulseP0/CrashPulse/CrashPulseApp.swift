@@ -89,7 +89,7 @@ final class CrashPulseDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         popover.contentViewController?.view.window?.makeKey()
     }
 
-    func popoverDidShow(_ notification: Notification) {
+    func popoverWillShow(_ notification: Notification) {
         model.panelVisible = true
     }
 

@@ -313,7 +313,9 @@ struct MenuMonitorView: View {
             switch tab {
             case .events: events
             case .live:
-                LiveView(snapshot: model.snapshot, activity: model.activity, monitoring: model.monitoringEnabled,
+                LiveView(snapshot: model.panelVisible ? model.snapshot : nil,
+                         activity: model.panelVisible ? model.activity : [],
+                         monitoring: model.monitoringEnabled, isVisible: model.panelVisible,
                          onResume: { model.setMonitoring(true) })
             }
         }
@@ -824,6 +826,7 @@ struct LiveView: View {
     let snapshot: Snapshot?
     let activity: [ActivityPoint]
     let monitoring: Bool
+    let isVisible: Bool
     let onResume: () -> Void
 
     private enum Order: String, CaseIterable {
@@ -837,6 +840,13 @@ struct LiveView: View {
     @State private var expanded: Set<String> = []
 
     var body: some View {
+        if isVisible {
+            visibleContent
+        }
+    }
+
+    @ViewBuilder
+    private var visibleContent: some View {
         if !monitoring {
             PanelMessage(symbol: "pause.circle", title: "Monitoring is paused",
                          message: "Resume to see which apps are using the CPU now.",
@@ -1222,7 +1232,7 @@ enum UIPreviewRenderer {
                 EventListView(report: report, showIgnored: .constant(false), onSelect: { _ in }, onToggleIgnored: { _ in })
             })),
             ("6-live", AnyView(panel(.live) {
-                LiveView(snapshot: snapshot, activity: activity, monitoring: true, onResume: {})
+                LiveView(snapshot: snapshot, activity: activity, monitoring: true, isVisible: true, onResume: {})
             })),
             ("7-empty", AnyView(panel(.events) {
                 EventListView(report: CPUHistoryReport(generatedAt: now, policy: HighCPUPolicy(), events: [],
