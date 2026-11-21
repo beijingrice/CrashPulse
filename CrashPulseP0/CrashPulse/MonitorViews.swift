@@ -507,7 +507,9 @@ struct MenuMonitorView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(event.forensics?.suspectedApp == nil ? "Recorded process" : "Likely contributor")
+                        Text(event.forensics?.suspectedApp == nil
+                             ? (event.triggerApp == nil ? "Recorded process" : "Recorded app")
+                             : "Likely contributor")
                             .font(.caption).foregroundStyle(.secondary)
                         Text(eventName(event)).font(.title2.weight(.semibold)).lineLimit(2)
                         Text(impactLabel(event)).font(.caption).foregroundStyle(.secondary)
@@ -518,7 +520,7 @@ struct MenuMonitorView: View {
                         Text(event.startedAt.formatted(date: .abbreviated, time: .standard))
                         Text(event.endReason == nil ? "Ongoing" :
                             "Last high reading \(event.lastObservedAt.formatted(date: endDateStyle(event), time: .standard))")
-                        Text("\(event.observedDurationSeconds.formatted(.number.precision(.fractionLength(0)))) s · \(percent(event.peakCPUPercent)) trigger peak")
+                        Text("\(event.observedDurationSeconds.formatted(.number.precision(.fractionLength(0)))) s · \(percent(event.peakCPUPercent)) \(event.triggerApp == nil ? "process peak" : "app CPU peak")")
                     }
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -552,9 +554,18 @@ struct MenuMonitorView: View {
                         Text("This recording has no comparative timeline.").foregroundStyle(.secondary)
                         if let path = event.path { Text(path).textSelection(.enabled).foregroundStyle(.secondary) }
                     }
-                    Text("Trigger PID \(event.identity.pid) · \(event.name ?? eventName(event))")
-                        .font(.caption).foregroundStyle(.secondary)
-                    if let reason = endLabel(event.endReason) {
+                    if let triggerApp = event.triggerApp {
+                        Text("Triggered by \(triggerApp.name) and its helpers")
+                            .font(.caption).foregroundStyle(.secondary)
+                        if event.incompleteAppSamples == true {
+                            Text("Some app members had no CPU reading. Totals use measured members.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                    } else {
+                        Text("Trigger PID \(event.identity.pid) · \(event.name ?? eventName(event))")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    if let reason = endLabel(event) {
                         Text(reason).font(.caption).foregroundStyle(.secondary)
                     }
                     if let baseline = event.baselineCPUPercent, let threshold = event.triggerThresholdCPUPercent {
@@ -660,7 +671,7 @@ struct MenuMonitorView: View {
     }
 
     private func eventName(_ event: HighCPUEvent) -> String {
-        event.forensics?.suspectedApp?.name ?? ProcessGroup(path: event.path)?.name ?? event.name
+        event.forensics?.suspectedApp?.name ?? event.triggerApp?.name ?? ProcessGroup(path: event.path)?.name ?? event.name
             ?? "PID \(event.identity.pid)"
     }
 
@@ -703,11 +714,13 @@ struct MenuMonitorView: View {
         }
     }
 
-    private func endLabel(_ reason: HighCPUEvent.EndReason?) -> String? {
-        switch reason {
+    private func endLabel(_ event: HighCPUEvent) -> String? {
+        switch event.endReason {
         case .belowThreshold: "CPU fell below the detection threshold"
-        case .processExited, .processMissing: "Process stopped appearing in samples"
-        case .processChanged: "PID now belongs to a different process"
+        case .processExited, .processMissing:
+            event.triggerApp == nil ? "Process stopped appearing in samples" : "App group stopped appearing in samples"
+        case .processChanged:
+            event.triggerApp == nil ? "PID now belongs to a different process" : "No app member continued from the previous sample"
         case .sampleUnavailable, .samplingGap, .clockChanged: "Monitoring lost continuous readings"
         case .monitorStopped, .monitorInterrupted: "Recording stopped"
         case nil: nil

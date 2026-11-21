@@ -1,4 +1,4 @@
-// Local fixture. One process runs two busy threads and owns an idle helper.
+// Local fixtures for full CPU saturation or a single process with a duty cycle.
 #include <errno.h>
 #include <pthread.h>
 #include <stdint.h>
@@ -23,13 +23,42 @@ static void *burn(void *argument) {
     return NULL;
 }
 
+static void burn_at_duty(long seconds, long duty) {
+    const uint64_t period = UINT64_C(100000000);
+    const uint64_t busy = period * (uint64_t)duty / 100;
+    const uint64_t start = uptime_ns();
+    const uint64_t deadline = start + (uint64_t)seconds * UINT64_C(1000000000);
+    printf("%d\n", getpid());
+    fflush(stdout);
+    for (uint64_t cycle = start; cycle < deadline; cycle += period) {
+        uint64_t stop = cycle + busy;
+        burn(&stop);
+        const uint64_t now = uptime_ns();
+        const uint64_t next = cycle + period;
+        if (now < next) {
+            struct timespec remaining = { .tv_nsec = (long)(next - now) };
+            while (nanosleep(&remaining, &remaining) < 0 && errno == EINTR) {}
+        }
+    }
+}
+
 int main(int argc, char **argv) {
     char *end = NULL;
     errno = 0;
-    long seconds = argc == 2 ? strtol(argv[1], &end, 10) : 0;
+    long seconds = (argc == 2 || argc == 3) ? strtol(argv[1], &end, 10) : 0;
     if (errno || !end || *end || seconds < 1 || seconds > 60) {
-        fprintf(stderr, "Usage: cpu-load SECONDS (1–60)\n");
+        fprintf(stderr, "Usage: cpu-load SECONDS (1–60) [DUTY_PERCENT (1–99)]\n");
         return 64;
+    }
+    if (argc == 3) {
+        errno = 0;
+        const long duty = strtol(argv[2], &end, 10);
+        if (errno || *end || duty < 1 || duty > 99) {
+            fprintf(stderr, "DUTY_PERCENT must be between 1 and 99.\n");
+            return 64;
+        }
+        burn_at_duty(seconds, duty);
+        return 0;
     }
 
     const pid_t helper = fork();

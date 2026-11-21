@@ -233,10 +233,10 @@ final class CPUHistoryTests: XCTestCase {
     func testUnsupportedHistoryIsNeverOverwritten() throws {
         let store = try fixtureStore()
         try FileManager.default.createDirectory(at: store.directory, withIntermediateDirectories: false)
-        let original = Data(#"{"schemaVersion":4,"events":[]}"#.utf8)
+        let original = Data(#"{"schemaVersion":5,"events":[]}"#.utf8)
         try original.write(to: store.fileURL)
         XCTAssertThrowsError(try store.startRecording(intervalSeconds: 5, now: at(0))) {
-            XCTAssertEqual($0 as? CPUHistoryStore.StoreError, .unsupportedVersion(4))
+            XCTAssertEqual($0 as? CPUHistoryStore.StoreError, .unsupportedVersion(5))
         }
         XCTAssertEqual(try Data(contentsOf: store.fileURL), original)
     }
@@ -466,7 +466,7 @@ final class CPUHistoryTests: XCTestCase {
         XCTAssertEqual(evidence.pluggedInSamples, 3)
         XCTAssertTrue(evidence.afterComplete)
         XCTAssertTrue(evidence.before.contains { $0.at <= event.startedAt && $0.measuredCPUPercent != nil })
-        XCTAssertTrue(evidence.during.contains { $0.triggerCPUPercent == 150 })
+        XCTAssertTrue(evidence.during.contains { $0.triggerCPUPercent == 185 })
         XCTAssertTrue(evidence.after.contains { $0.at > event.lastObservedAt && $0.measuredCPUPercent != nil })
         try store.setIgnored(false, id: event.id, now: at(83))
         XCTAssertNil(try store.report(now: at(83)).events.first { $0.id == active.id }?.ignoredAt)
@@ -530,6 +530,73 @@ final class CPUHistoryTests: XCTestCase {
         XCTAssertEqual(evidence.basis, .aboveBaseline)
         XCTAssertGreaterThan(evidence.estimatedExtraCPUWattHours ?? 0, 0.04)
         try recorder.stop(now: at(61))
+    }
+
+    func testSeveralSubthresholdHelpersCreateOneAppEvent() throws {
+        let store = try fixtureStore()
+        let recorder = try store.startRecording(intervalSeconds: 5, now: at(0))
+        for end in stride(from: 5, through: 35, by: 5) {
+            let helpers = helperRows(until: end, cpu: 40)
+            let unrelated = (40...43).map { pid in
+                sample(from: end - 5, to: end, cpu: 40, pid: Int32(pid), path: "/tmp/independent")
+            }
+            try recorder.ingest(snapshot(end, rows: helpers + unrelated))
+        }
+        let events = recorder.report(now: at(35)).events
+        let event = try XCTUnwrap(events.first)
+        XCTAssertEqual(events.count, 1)
+        XCTAssertEqual(event.triggerApp?.name, "Fixture")
+        XCTAssertEqual(event.triggerApp?.id, "/Applications/Fixture.app")
+        XCTAssertEqual(event.peakCPUPercent, 160)
+        XCTAssertEqual(event.observedDurationSeconds, 35)
+        XCTAssertEqual(event.incompleteAppSamples, false)
+        XCTAssertTrue(event.forensics?.during.contains { $0.triggerCPUPercent == 160 } ?? false)
+        try recorder.stop(now: at(36))
+    }
+
+    func testAppContinuityUsesVerifiedSurvivingIdentity() throws {
+        var tracker = HighCPUTracker(policy: policy, intervalSeconds: 5)
+        var first: HighCPUEvent?
+        for end in stride(from: 5, through: 30, by: 5) {
+            first = tracker.ingest(snapshot(end, rows: helperRows(until: end, cpu: 40))).first
+        }
+        let event = try XCTUnwrap(first)
+        let restartedHelpers = helperRows(until: 35, cpu: 40, replacements: [31, 32, 33])
+        let same = tracker.ingest(snapshot(35, rows: restartedHelpers))
+        XCTAssertEqual(same.map(\.id), [event.id])
+        XCTAssertEqual(same.first?.observedDurationSeconds, 35)
+        let allReplaced = helperRows(until: 40, cpu: 40, replacements: [30, 31, 32, 33], birth: 200)
+        let ended = tracker.ingest(snapshot(40, rows: allReplaced))
+        XCTAssertEqual(ended.map(\.id), [event.id])
+        XCTAssertEqual(ended.first?.endReason, .processChanged)
+    }
+
+    func testAppSamplesCanReportKnownHighUsageWithAnUnmeasuredMember() throws {
+        var tracker = HighCPUTracker(policy: policy, intervalSeconds: 5)
+        let blocked = ProcessRow(pid: 52, name: "Unreadable", path: "/Applications/Fixture.app/Contents/MacOS/Unreadable",
+                                 identity: nil, effectiveUID: nil, parentPID: nil, sampledAt: at(5), cpuPercent: nil,
+                                 residentBytes: nil, footprintBytes: nil, state: .inaccessible,
+                                 issues: [.system(.resources, -1, EPERM)])
+        var result: HighCPUEvent?
+        for end in stride(from: 5, through: 30, by: 5) {
+            result = tracker.ingest(snapshot(end, rows: helperRows(until: end, cpu: 40) + [blocked])).first
+        }
+        let active = try XCTUnwrap(result)
+        XCTAssertEqual(active.peakCPUPercent, 160)
+        XCTAssertEqual(active.incompleteAppSamples, true)
+        let ended = tracker.ingest(snapshot(35, rows: helperRows(until: 35, cpu: 5) + [blocked])).first
+        XCTAssertEqual(ended?.id, active.id)
+        XCTAssertEqual(ended?.endReason, .sampleUnavailable)
+    }
+
+    private func helperRows(until end: Int, cpu: Double, replacements: Set<Int32> = [],
+                            birth: UInt64 = 100) -> [ProcessRow] {
+        (30...33).map { Int32($0) }.map { pid in
+            let replaced = replacements.contains(pid)
+            return sample(from: end - 5, to: end, cpu: cpu, pid: pid, birth: replaced ? birth : 42,
+                          machStart: replaced ? birth : 123,
+                          path: "/Applications/Fixture.app/Contents/Helpers/Helper\(pid).app/Contents/MacOS/Worker")
+        }
     }
 
 }

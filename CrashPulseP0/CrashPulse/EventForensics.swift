@@ -6,13 +6,16 @@ struct ProcessGroup: Codable, Equatable, Identifiable, Sendable {
 
     init?(path: String?) {
         guard let path, !path.isEmpty else { return nil }
-        if let boundary = path.range(of: ".app/Contents/", options: .caseInsensitive) {
-            id = String(path[..<path.index(boundary.lowerBound, offsetBy: 4)])
-            name = ((id as NSString).lastPathComponent as NSString).deletingPathExtension
-        } else {
-            id = path
-            name = (path as NSString).lastPathComponent
+        self = Self.bundle(for: path) ?? Self(id: path, name: (path as NSString).lastPathComponent)
+    }
+
+    static func bundle(for path: String?) -> Self? {
+        guard let path, let boundary = path.range(of: ".app/Contents/", options: .caseInsensitive) else {
+            return nil
         }
+        let id = String(path[..<path.index(boundary.lowerBound, offsetBy: 4)])
+        let name = ((id as NSString).lastPathComponent as NSString).deletingPathExtension
+        return Self(id: id, name: name)
     }
 
     init(row: ProcessRow) {
@@ -102,6 +105,7 @@ struct ForensicsTracker {
     fileprivate struct Label {
         var name: String?
         var path: String?
+        var bundle: ProcessGroup?
         var lastSeen: Date
     }
 
@@ -129,6 +133,12 @@ struct ForensicsTracker {
     }
 
     private struct Frame {
+        struct TriggerReading {
+            let from: Date
+            let to: Date
+            let cpu: Double
+        }
+
         let start: Date
         let end: Date
         let windows: [Window]
@@ -136,9 +146,21 @@ struct ForensicsTracker {
         let foregroundAppID: String?
         let supply: PowerSupply?
 
-        func point(trigger: Instance? = nil) -> ActivityPoint {
-            ActivityPoint(at: end, measuredCPUPercent: measuredCPU,
-                          triggerCPUPercent: trigger.flatMap { key in windows.first { $0.instance == key }?.cpu })
+        func point(triggerCPU: Double? = nil) -> ActivityPoint {
+            ActivityPoint(at: end, measuredCPUPercent: measuredCPU, triggerCPUPercent: triggerCPU)
+        }
+
+        func triggerReading(_ instance: Instance, app: ProcessGroup?, labels: [Instance: Label]) -> TriggerReading? {
+            guard let app else {
+                return windows.first { $0.instance == instance }.map {
+                    TriggerReading(from: $0.from, to: $0.to, cpu: $0.cpu)
+                }
+            }
+            let members = windows.filter { labels[$0.instance]?.bundle?.id == app.id }
+            guard let from = members.map(\.from).max(), let to = members.map(\.to).min(), from < to else {
+                return nil
+            }
+            return TriggerReading(from: from, to: to, cpu: members.reduce(0) { $0 + $1.cpu })
         }
     }
 
@@ -211,9 +233,8 @@ struct ForensicsTracker {
                 }
             }
             // A scan belongs to the event if it includes an observed trigger interval.
-            let triggerWindow = frame.windows.first { $0.instance == trigger }
-            let point = ActivityPoint(at: frame.end, measuredCPUPercent: frame.measuredCPU,
-                                      triggerCPUPercent: triggerWindow?.cpu)
+            let triggerWindow = frame.triggerReading(trigger, app: event.triggerApp, labels: labels)
+            let point = frame.point(triggerCPU: triggerWindow?.cpu)
             if let triggerWindow, triggerWindow.from >= event.startedAt, triggerWindow.to <= event.lastObservedAt,
                frame.end > (latestContextPoint ?? .distantPast) {
                 during.append(point)
@@ -353,7 +374,10 @@ struct ForensicsTracker {
                 let key = Instance(identity: identity, startTicks: timing.processStartTicks)
                 var label = labels[key] ?? Label(lastSeen: at)
                 label.name = row.name ?? label.name
-                label.path = row.path ?? label.path
+                if let path = row.path, path != label.path {
+                    label.path = path
+                    label.bundle = ProcessGroup.bundle(for: path)
+                }
                 label.lastSeen = at
                 labels[key] = label
             }
@@ -428,8 +452,10 @@ struct ForensicsTracker {
                 baseline[window.instance, default: Measurement()].add(window, fraction: fraction)
             }
         }
-        return Recording(event: event, trigger: trigger, baseline: baseline,
-                         before: frames.filter { $0.end >= before && $0.end <= event.startedAt }.map { $0.point(trigger: trigger) },
+        let context = frames.filter { $0.end >= before && $0.end <= event.startedAt }.map { frame in
+            frame.point(triggerCPU: frame.triggerReading(trigger, app: event.triggerApp, labels: labels)?.cpu)
+        }
+        return Recording(event: event, trigger: trigger, baseline: baseline, before: context,
                          maxElapsed: maxElapsed, afterWindow: afterWindow,
                          through: event.startedAt)
     }

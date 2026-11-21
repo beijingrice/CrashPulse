@@ -43,7 +43,7 @@ runner=.build/xcode/Build/Products/Debug/CrashPulseOff.app/Contents/MacOS/CrashP
 ```
 
 - The default interval is 5 seconds. `--monitor --interval 1|2|5|10` selects an interval. `--duration SECONDS` runs a bounded session. Both commands accept `--history-dir PATH` to use a separate history directory.
-- A CPU event requires 30 seconds of adjacent valid windows of the same verified process. The cold-start threshold is 80% of one logical core. After 15 seconds of below-threshold readings, the trigger uses the largest of 45%, the learned baseline plus 35 percentage points, and 1.5 times the baseline. A candidate keeps its onset threshold. Wake resets, PID reuse, sampling gaps, denied reads, or wall-clock jumps break continuity. Per-process windows longer than twice the configured interval are discarded.
+- A CPU event requires 30 seconds of adjacent valid windows for one app group or a standalone process. For an app, eligible helpers under the outermost bundle contribute their CPU usage over the shared sample interval. At least one verified member must link adjacent windows. Known missing member readings are flagged, and the measured sum can still trigger an event if it reaches the threshold. The cold-start threshold is 80% of one logical core. After 15 seconds of below-threshold readings, the trigger uses the largest of 45%, the learned baseline plus 35 percentage points, and 1.5 times the baseline. A candidate keeps its onset threshold. Wake resets, sampling gaps, or wall-clock jumps break continuity. Per-process windows longer than twice the configured interval are discarded.
 - The recorder keeps up to three minutes of recent process windows in memory. When an event qualifies, it retains up to 30 seconds of context before onset, cumulative contributions for the entire event, and up to 15 seconds of follow-up scans at the default interval. With the 10 second setting it allows up to 30 seconds of follow-up. An early stop or missing data can leave a partial timeline. Older journal records are preserved with their original fields.
 - The three leading processes are ranked by observed CPU core-seconds within the event. Their share uses all measured process CPU in that window. The likely app is ranked separately using the increase over its comparable pre-event CPU baseline or verified process starts near onset. With limited baseline evidence, the ranking uses observed CPU. The report shows estimated extra CPU energy only for comparable measured windows. It identifies likely contributors and foreground context. The original in-app task remains unknown when sampling cannot identify it.
 - Live and event attribution group real executable paths under the outermost app bundle, so nested helpers roll up to their host app. Standalone executables are shown separately. Processes without an available path remain separate. Impact labels use duration, relative CPU increase, estimated excess CPU energy where available, and foreground context. Recurring background activity requires repeated observed events on separate days. The app offers suggestions and a reversible Ignore action. It does not stop or modify processes.
@@ -53,6 +53,12 @@ To run the end-to-end test, pass the signed app and a new output directory. It u
 
 ```sh
 Scripts/test-history.zsh .build/xcode/Build/Products/Debug/CrashPulseOff.app ".build/history-test-$(date +%Y%m%d-%H%M%S)"
+```
+
+To verify app-level detection, run the four-helper fixture. It checks that each helper individually stays below the trigger floor while their combined load makes one persistent app event with helper evidence and a follow-up timeline.
+
+```sh
+Scripts/test-app-trigger.zsh .build/xcode/Build/Products/Debug/CrashPulseOff.app ".build/app-trigger-test-$(date +%Y%m%d-%H%M%S)"
 ```
 
 ## Verify App Sandbox
@@ -110,7 +116,7 @@ The battery ranking in **Overview** uses the Mac's local date. It counts verifie
 
 The panel updates from the current recorder while it is open. The local journal checkpoints battery usage every 30 seconds and flushes on a normal stop. The ranking still shows that day's recorded battery use after reconnecting power or restarting CrashPulse. A new day starts a new total.
 
-The history export (schema 3) includes `observedCPUEnergyWattHours`, time covered by energy readings, optional `forensics` evidence, `recurringBackgroundActivity`, and an optional `batteryToday` section. Earlier on-disk schema versions are upgraded automatically. Live diagnostics (schema 2) include power supply and per-process `cpuPower` with `watts` and `intervalWattHours`.
+The history export (schema 4) includes `observedCPUEnergyWattHours`, time covered by energy readings, optional `forensics` evidence, `recurringBackgroundActivity`, and an optional `batteryToday` section. App events include `triggerApp` and may flag `incompleteAppSamples`. Earlier on-disk schema versions are upgraded automatically. Live diagnostics (schema 2) include power supply and per-process `cpuPower` with `watts` and `intervalWattHours`.
 
 ## Sampling rules and limits
 

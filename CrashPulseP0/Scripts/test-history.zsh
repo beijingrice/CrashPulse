@@ -95,7 +95,7 @@ folder = Path(folder)
 
 def fixture_events(name):
     report = json.loads((folder / (name + ".json")).read_bytes())
-    assert report["schemaVersion"] == 3
+    assert report["schemaVersion"] == 4
     assert report["policy"]["minimumDurationSeconds"] == 30
     assert all(e["identity"]["pid"] != int(idle_pid) for e in report["events"])
     return [e for e in report["events"] if e["identity"]["pid"] == int(pid)]

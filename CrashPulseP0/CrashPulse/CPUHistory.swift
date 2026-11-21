@@ -2,7 +2,7 @@ import Darwin
 import Foundation
 
 struct CPUHistoryReport: Encodable {
-    let schemaVersion = 3
+    let schemaVersion = 4
     let generatedAt: Date
     let policy: HighCPUPolicy
     let events: [HighCPUEvent]
@@ -52,7 +52,7 @@ struct CPUHistoryStore {
     }
 
     fileprivate struct HistoryFile: Codable, Equatable {
-        var schemaVersion = 3
+        var schemaVersion = 4
         var events: [HighCPUEvent]
         var batteryDay: BatteryUsageDay? = nil
     }
@@ -188,7 +188,7 @@ struct CPUHistoryStore {
             return (HistoryFile(events: []), true)
         }
         // A newer format is left untouched for the app version that wrote it.
-        guard (1...3).contains(version) else { throw StoreError.unsupportedVersion(version) }
+        guard (1...4).contains(version) else { throw StoreError.unsupportedVersion(version) }
         guard let stored = try? decoder.decode(StoredHistory.self, from: data) else {
             return (HistoryFile(events: []), true)
         }
