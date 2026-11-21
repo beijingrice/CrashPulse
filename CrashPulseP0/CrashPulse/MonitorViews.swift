@@ -150,17 +150,28 @@ struct EventStory {
         }
     }
 
+    var timeStatus: String {
+        let duration = PulseFormat.duration(event.observedDurationSeconds)
+        switch event.endReason {
+        case nil: return "Ongoing for \(duration)"
+        case .belowThreshold, .processExited: return "Ended after \(duration)"
+        default: return "Recorded for \(duration)"
+        }
+    }
+
     var timeNote: String {
         let start = event.startedAt.formatted(.dateTime.month(.abbreviated).day().hour().minute().second())
         guard let reason = event.endReason else { return "Started \(start)." }
-        let end = event.lastObservedAt.formatted(date: .omitted, time: .standard)
+        let sameDay = Calendar.current.isDate(event.startedAt, inSameDayAs: event.lastObservedAt)
+        let end = event.lastObservedAt.formatted(date: sameDay ? .omitted : .abbreviated, time: .standard)
         return "\(start) to \(end). Ended \(Self.ending(reason))."
     }
 
     private static func ending(_ reason: HighCPUEvent.EndReason) -> String {
         switch reason {
         case .belowThreshold: "when CPU use dropped"
-        case .processExited, .processMissing: "when the process quit"
+        case .processExited: "when the process quit"
+        case .processMissing: "when it was no longer observed"
         case .processChanged: "when the process restarted"
         case .sampleUnavailable, .samplingGap: "when readings stopped"
         case .clockChanged: "after a clock change"
@@ -612,11 +623,14 @@ struct EventDetailView: View {
                     }
                 }
 
-                Text(story.timeNote)
-                    .font(Pulse.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.top, severity == .unknown ? 0 : 18)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(story.timeStatus).font(Pulse.bodyStrong)
+                    Text(story.timeNote)
+                        .font(Pulse.detail)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.top, 18)
                 HStack {
                     Button(event.ignoredAt == nil ? "Ignore this event" : "Restore this event",
                            systemImage: event.ignoredAt == nil ? "eye.slash" : "eye",

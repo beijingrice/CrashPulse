@@ -4,7 +4,7 @@ Last updated 2026-11-21. Read `AGENTS.md` first for build commands, working rule
 
 ## Where things are
 
-- Code: `CrashPulseP0/` in this repository, branch `master`. The latest commit is `70744b5 Redesign the menu bar panel around a single CPU timeline`.
+- Code: `CrashPulseP0/` in this repository, branch `master`. The continuous-timeline redesign landed in `70744b5`.
 - The owner runs the Release Sandbox Off build from `CrashPulseP0/.build/xcode/Build/Products/Release/CrashPulseOff.app` (bundle ID `org.crashpulse.p0.off`). It records to `~/Library/Application Support/CrashPulse/cpu-history.json`.
 - 52 unit tests pass. Both schemes build in Release.
 
@@ -25,10 +25,11 @@ Last updated 2026-11-21. Read `AGENTS.md` first for build commands, working rule
 2. Detection across app helpers: sustained load spread over several helpers of one app now triggers an event (`a1c4827`).
 3. History writes are batched at 30 s checkpoints instead of every scan (`b4056c2`). App bundle classification is cached (`8d2498f`).
 4. Panel redesign (`70744b5`): Overview removed. Events are grouped by day with severity dots and sparklines. Event detail follows the four tiers in `AGENTS.md`, with one continuous CPU trace. Live has a 3-minute trend and ranked apps with share bars. Debug builds have `--render-ui`.
+5. Event detail gives the status and observed duration more weight, with exact timestamps and the end reason below. A process disappearing from samples is described as an observation. Verified the status in light and dark renders and the real Release popover.
 
 ## Open work, in suggested order
 
-1. **Check the redesign in the real popover.** It was reviewed only from `--render-ui` screenshots, which do not show the popover's translucent background. Open the panel, compare it with the renders, and fix anything that differs. Pay attention to tinted elements: the recurring-activity note and the event span.
+1. **Stop Live view work when the popover is hidden.** In 75-second Release samples at the default 5-second interval on plugged-in Apple silicon, per-process CPU power was 3.1 mW with the panel closed from launch, 7.7 mW in an event detail, 55.2 mW in Live, and 56.6 mW after dismissing Live. A stack sample after dismissal still showed `LiveView.content` grouping processes on the main thread. Keep the sampler active and stop view work while hidden. The Nov 21 journal also attributed 0.729 Wh of CPU energy to an earlier 7m 50s CrashPulseOff event with a 99.8% peak. Its cause remains unverified.
 2. **Redesign the Settings window** (`MonitorSettingsView`) to match the panel. It is still a plain grouped form with a paragraph of explanation. Apply the AGENTS.md rules and add it to `UIPreviewRenderer`.
 3. **System processes are invisible.** About 16% of processes (root and other-user daemons such as WindowServer, mds_stores, backupd) return `EPERM` for resource reads, so their spikes are never detected. The setuid `/bin/ps` can read them. Options: a low-frequency `ps` fallback for denied PIDs, or a privileged helper through `SMAppService`. Discuss the choice with the owner before building it.
 4. **The command line has no foreground context.** `HistoryCommand.monitor` never sets `snapshot.foregroundPID`, so events recorded through `--monitor` can never be rated "busy in the background". Either read the frontmost app there too, or document the gap.
