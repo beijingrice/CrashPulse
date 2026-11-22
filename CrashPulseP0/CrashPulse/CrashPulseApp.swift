@@ -12,12 +12,15 @@ enum CrashPulseApp {
 }
 
 @MainActor
-final class CrashPulseDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
+final class CrashPulseDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSWindowDelegate {
     private let model = MonitorModel()
     private let popover = NSPopover()
     private var statusItem: NSStatusItem?
     private var settingsWindow: NSWindow?
+    private var welcomeWindow: NSWindow?
     private var wakeObserver: NSObjectProtocol?
+    /// Set once the welcome window has been seen. Launch with `-showWelcome YES` to show it again.
+    private static let welcomeCompletedKey = "welcomeCompleted"
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         installStatusItem()
@@ -26,11 +29,30 @@ final class CrashPulseDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         ) { [weak self] _ in
             Task { @MainActor in self?.model.woke() }
         }
+        let firstLaunch = shouldShowWelcome()
         model.startIfEnabled()
+        if firstLaunch { showWelcome() }
+    }
+
+    /// True on a genuine first launch. People who used CrashPulse before the welcome existed already
+    /// have a history journal, so they are marked as done instead.
+    private func shouldShowWelcome() -> Bool {
+        let defaults = UserDefaults.standard
+        if defaults.bool(forKey: "showWelcome") { return true }
+        guard model.run.canRecordHistory, !defaults.bool(forKey: Self.welcomeCompletedKey) else { return false }
+        if let directory = try? CPUHistoryStore.defaultDirectory(),
+           FileManager.default.fileExists(atPath: directory.appendingPathComponent("cpu-history.json").path) {
+            defaults.set(true, forKey: Self.welcomeCompletedKey)
+            return false
+        }
+        return true
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        if settingsWindow?.isVisible == true {
+        if welcomeWindow?.isVisible == true {
+            sender.activate()
+            welcomeWindow?.makeKeyAndOrderFront(nil)
+        } else if settingsWindow?.isVisible == true {
             sender.activate()
             settingsWindow?.makeKeyAndOrderFront(nil)
         } else {
@@ -100,7 +122,10 @@ final class CrashPulseDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
     private func showSettings() {
         popover.performClose(nil)
         if settingsWindow == nil {
-            let host = NSHostingController(rootView: MonitorSettingsView(model: model))
+            let host = NSHostingController(rootView: MonitorSettingsView(model: model, showWelcome: { [weak self] in
+                self?.settingsWindow?.close()
+                self?.showWelcome()
+            }))
             let window = NSWindow(contentViewController: host)
             window.title = "CrashPulse Settings"
             window.styleMask = [.titled, .closable]
@@ -110,6 +135,46 @@ final class CrashPulseDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         }
         NSApp.activate()
         settingsWindow?.makeKeyAndOrderFront(nil)
+    }
+
+    private func showWelcome() {
+        popover.performClose(nil)
+        if welcomeWindow == nil {
+            let host = NSHostingController(rootView: WelcomeContainer(
+                model: model,
+                onShowPanel: { [weak self] in self?.finishWelcome(showPanel: true) },
+                onFinish: { [weak self] in self?.finishWelcome(showPanel: false) }))
+            host.sizingOptions = []
+            let window = NSWindow(contentViewController: host)
+            window.title = "Welcome to CrashPulse"
+            window.styleMask = [.titled, .closable, .fullSizeContentView]
+            window.titlebarAppearsTransparent = true
+            window.titleVisibility = .hidden
+            window.isMovableByWindowBackground = true
+            window.isReleasedWhenClosed = false
+            // The content runs under the transparent title bar, so the frame is the design size.
+            window.setFrame(NSRect(origin: window.frame.origin, size: WelcomeView.size), display: false)
+            window.delegate = self
+            window.center()
+            welcomeWindow = window
+        }
+        NSApp.activate()
+        welcomeWindow?.makeKeyAndOrderFront(nil)
+    }
+
+    private func finishWelcome(showPanel: Bool) {
+        welcomeWindow?.close()
+        if showPanel {
+            // Let the window finish closing so the popover becomes key.
+            DispatchQueue.main.async { [weak self] in self?.showPopover() }
+        }
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow, window === welcomeWindow else { return }
+        // Closing the window any way counts as having seen it.
+        UserDefaults.standard.set(true, forKey: Self.welcomeCompletedKey)
+        welcomeWindow = nil
     }
 }
 

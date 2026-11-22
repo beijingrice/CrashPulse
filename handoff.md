@@ -2,20 +2,22 @@
 
 Last updated 2026-11-22. Read this file before editing and follow [AGENTS.md](AGENTS.md) for the project rules and UI design guide.
 
-## Next task: first-launch experience
+## Next task: finish verifying the welcome window
 
-Build a first-launch interface for people opening CrashPulse for the first time. The current app has no onboarding state or welcome screen. `CrashPulseDelegate.applicationDidFinishLaunching` in `CrashPulseP0/CrashPulse/CrashPulseApp.swift` installs the menu bar item and starts monitoring. The app uses `LSUIElement`. `MonitorModel` reads `monitoringEnabled` and `monitoringInterval` from `UserDefaults`, with monitoring on and a 5-second interval by default. Opening the menu bar panel enters Events on the non-sandboxed build.
+The first-launch welcome is implemented (see Recent work 9) but has only been checked through renders and window-level launch probes. Before calling it done:
 
-- Start with `CrashPulseApp.swift` for launch and window coordination and `MonitorViews.swift` for SwiftUI, `PanelMessage`, design tokens, and preview rendering. Sketch the flow and explain when it appears, how users reach the menu bar panel, and what happens on relaunch. Show the owner the sketch before implementing a substantial UI redesign.
-- Explain what CrashPulse watches, where to find it, and that there may be no events yet. Preserve the menu bar workflow and the Events and Live tabs. Follow the current measurement copy for CPU energy and sampling coverage.
-- Verify first launch and relaunch in a separate macOS test account or machine with fresh preferences and history. Add a first-launch scene to `UIPreviewRenderer` for light and dark screenshots and use the actual Release app to verify launch behavior. The CLI `--history-dir` option applies to `--monitor` and `--history`. Keep the owner's preferences and history in place.
+- In a separate macOS test account (fresh preferences and history), launch the Release app and click through all three pages: Continue, Back, Return and Esc, Done, and Show Me. Show Me must close the window and open the menu bar panel anchored to the status item.
+- Check the real window: the close button over the transparent title bar must not collide with the icon or titles, and the default button must be blue.
+- Relaunch and confirm the welcome stays hidden. Open Settings › Show Welcome… and confirm it reappears.
+- Do not test in the owner's account by deleting `welcomeCompleted`. `CFFIXED_USER_HOME` isolates the history directory but not preferences, so a probe there writes the owner's real `org.crashpulse.p0.off` domain.
 
 ## Current source and builds
 
-- App baseline is commit `74fad09` on `master`. It includes the attribution fix and beta packaging script. There is no first-launch implementation yet.
-- Latest verified Release app: `CrashPulseP0/.build/beta-candidate/CrashPulse.app`. Latest ZIP: `CrashPulseP0/.build/beta-candidate/CrashPulse-0.1.0-local-test.zip`. Both use Hardened Runtime and a local ad hoc signature. The unpacked ZIP was verified and used for the actual menu bar and four-Helper smoke tests on Nov 21.
-- The separate day-to-day app at `CrashPulseP0/.build/xcode/Build/Products/Release/CrashPulseOff.app` predates that attribution fix. Both artifacts use `org.crashpulse.p0.off`. The daily journal is `~/Library/Application Support/CrashPulse/cpu-history.json`.
-- The Nov 21 attribution build passed all 52 unit tests. Its Debug app is in `CrashPulseP0/.build/beta-debug/Build/Products/Debug/CrashPulseOff.app`, with light and dark renders in `CrashPulseP0/.build/ui-beta-attribution/`.
+- `master` contains the welcome window on top of `9bcc6d7`.
+- The owner's day-to-day app at `CrashPulseP0/.build/xcode/Build/Products/Release/CrashPulseOff.app` was rebuilt on Nov 22 from the welcome commit, so it includes the attribution fix and the welcome. It is running. It skipped the welcome because the owner already has history, and wrote `welcomeCompleted = 1`.
+- Latest packaged beta: `CrashPulseP0/.build/beta-candidate/CrashPulse.app` and `CrashPulse-0.1.0-local-test.zip` (Hardened Runtime, ad hoc signature, Nov 21). It predates the welcome. Rebuild with `Scripts/prepare-beta.zsh` before sharing.
+- Both artifacts use `org.crashpulse.p0.off`. The daily journal is `~/Library/Application Support/CrashPulse/cpu-history.json`.
+- Claude Design mirror of the panel (Events, Event detail, Live, with dark and severity switches): https://claude.ai/artifact/1VaNZyjmpBgS7zV1trhZqv. It is a hand-built mockup, private to the owner, not synced with code, and does not include the welcome.
 
 ## Build and verify from this checkout
 
@@ -52,8 +54,8 @@ xcodebuild -project CrashPulseP0.xcodeproj -scheme CrashPulse-Sandbox-Off \
 | `EventForensics.swift` | 180 s rolling frames, before/during/after context, likely-app attribution, impact level |
 | `CPUHistory.swift` | Journal storage: lock, atomic writes, 30 s checkpoints, recovery, damaged-file quarantine |
 | `BatteryUsage.swift` | Per-day battery energy ranking (export only since Overview was removed) |
-| `CrashPulseApp.swift` | App delegate, popover, sampling actor and `MonitorModel` |
-| `MonitorViews.swift` | All panel UI, Settings window, and the Debug-only `UIPreviewRenderer` |
+| `CrashPulseApp.swift` | App delegate (popover, Settings and welcome windows, first-launch check), sampling actor and `MonitorModel` |
+| `MonitorViews.swift` | All panel UI, the first-launch `WelcomeView`, Settings window, and the Debug-only `UIPreviewRenderer` |
 | `HistoryCommand.swift`, `Diagnostics.swift` | `--monitor`, `--history`, `--capture` command-line modes |
 | `Design/AppIcon.svg`, `Design/AppIcon-small.svg`, `Scripts/make-icon.zsh` | App icon sources and the script that builds `CrashPulse/AppIcon.icns` |
 
@@ -67,6 +69,7 @@ xcodebuild -project CrashPulseP0.xcodeproj -scheme CrashPulse-Sandbox-Off \
 6. App icon (`4b52c45`, `468470a`): a calm CPU trace rising into a sustained plateau inside a tinted event span, matching the event detail chart. The owner approved this version. Both targets bundle `AppIcon.icns` through `CFBundleIconFile`, and Finder shows it. To change the icon, edit the SVGs in `Design/` and run `Scripts/make-icon.zsh` (needs `rsvg-convert` from Homebrew). Never edit the `.icns` directly. The small SVG is a simplified variant for 16 and 32 px, so keep the two in step. The menu bar item still uses the `waveform.path.ecg` SF Symbol on purpose.
 7. A hidden Live view stops grouping and charting while keeping its controls and background monitoring. In the same plugged-in Release process with 5-second sampling, 75-second samples measured 2.5 mW at startup with the panel closed, 56.8 mW in Live, and 4.9 mW after closing it. The previous closed-after-Live measurement was 56.6 mW. The new closed-state stack sample showed the sampling worker and did not capture Live grouping. Reopening Live showed the samples taken while hidden and retained its sort setting. Raw measurements and stack samples are in the local `.build/live-visibility-audit` directory.
 8. Event details and rows distinguish the recorded CPU trigger from a different likely contributor. The trace and peak follow the trigger and the CPU energy estimate follows the contributor. Verified the split in light and dark previews and in the real popover of the unpacked Hardened Runtime build. `Scripts/prepare-beta.zsh` packages the local Release and supports Developer ID signing and notarization. The local ZIP is in `.build/beta-candidate`.
+9. First-launch welcome: a 440×480 window with a transparent title bar and three pages. 1, what CrashPulse does, with the signature trace. 2, what it watches (sample interval, 30-second rule, explanations) plus the Mac's live CPU from `MonitorModel.activity`. 3, where it lives, with a menu bar and panel sketch and a note that the event list can start empty. Show Me closes the window and opens the real panel. It appears only on a true first launch of the Sandbox Off build: no `welcomeCompleted` default and no history journal. Existing users with a journal are marked done silently, and closing the window any way marks it seen. Settings has Show Welcome…, and launching with `-showWelcome YES` forces it. Verified: light and dark renders of all three pages (`--render-ui` scenes `8-welcome-*`); launch probes with an isolated history directory for fresh install (shown), existing journal (hidden), already seen (hidden) and forced (shown); a 440×480 window frame; 52 unit tests (the test target does not compile the app or view files). Not yet verified by clicking through a real window; see Next task.
 
 ## Other open work
 

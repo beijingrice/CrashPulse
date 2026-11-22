@@ -1072,6 +1072,306 @@ struct LiveView: View {
     }
 }
 
+// MARK: - Welcome
+
+/// Live wrapper used by the app's welcome window.
+struct WelcomeContainer: View {
+    @ObservedObject var model: MonitorModel
+    let onShowPanel: () -> Void
+    let onFinish: () -> Void
+
+    var body: some View {
+        WelcomeView(activity: model.activity, interval: model.interval, monitoring: model.monitoringEnabled,
+                    onShowPanel: onShowPanel, onFinish: onFinish)
+            // The window's title bar is transparent; let the layout's own top padding clear it.
+            .ignoresSafeArea()
+    }
+}
+
+/// A short first-launch introduction: what CrashPulse does, what it watches, and where it lives.
+struct WelcomeView: View {
+    let activity: [ActivityPoint]
+    let interval: Int
+    let monitoring: Bool
+    let onShowPanel: () -> Void
+    let onFinish: () -> Void
+    @State private var page: Int
+
+    static let size = CGSize(width: 440, height: 480)
+    private static let pageCount = 3
+
+    init(activity: [ActivityPoint], interval: Int, monitoring: Bool, startPage: Int = 0,
+         onShowPanel: @escaping () -> Void, onFinish: @escaping () -> Void) {
+        self.activity = activity
+        self.interval = interval
+        self.monitoring = monitoring
+        self.onShowPanel = onShowPanel
+        self.onFinish = onFinish
+        _page = State(initialValue: startPage)
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ZStack(alignment: .topLeading) {
+                switch page {
+                case 0: intro.transition(.opacity)
+                case 1: watches.transition(.opacity)
+                default: menuBar.transition(.opacity)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .padding(.horizontal, 36)
+            .padding(.top, 44)
+            footer
+        }
+        .frame(width: Self.size.width, height: Self.size.height)
+    }
+
+    // Page 1: what CrashPulse is for.
+    private var intro: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Image(nsImage: NSApp.applicationIconImage ?? NSImage())
+                .resizable()
+                .frame(width: 64, height: 64)
+                .padding(.leading, -6)
+                .padding(.bottom, 18)
+                .accessibilityHidden(true)
+            Text("Welcome to CrashPulse")
+                .font(Pulse.title)
+                .padding(.bottom, 8)
+            Text("CrashPulse notices when an app keeps your Mac’s CPU busy for too long, and tells you which app it was.")
+                .font(Pulse.body)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.bottom, 28)
+            WelcomeTrace()
+                .frame(height: 110)
+        }
+    }
+
+    // Page 2: what it watches, with the Mac's real CPU use as proof that it is already running.
+    private var watches: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("What CrashPulse watches")
+                .font(Pulse.title)
+                .padding(.bottom, 22)
+            VStack(alignment: .leading, spacing: 16) {
+                feature("gauge.with.dots.needle.50percent", "Checks every \(interval) seconds",
+                        "It samples CPU use of the apps running under your account. Readings stay on this Mac.")
+                feature("waveform.path.ecg", "Records sustained spikes",
+                        "When an app keeps the CPU busy for 30 seconds or more, it becomes an event.")
+                feature("text.magnifyingglass", "Explains each one",
+                        "See which app it was, how long it lasted and what you can do.")
+            }
+            Spacer(minLength: 16)
+            Divider().padding(.bottom, 12)
+            liveReading
+        }
+    }
+
+    private func feature(_ symbol: String, _ title: String, _ detail: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Image(systemName: symbol)
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 22)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title).font(Pulse.bodyStrong)
+                Text(detail)
+                    .font(Pulse.detail)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private var liveReading: some View {
+        let points = activity.compactMap(\.measuredCPUPercent)
+        return HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Your Mac right now").font(Pulse.caption).foregroundStyle(.secondary)
+                if let latest = points.last {
+                    Text("\(PulseFormat.percent(latest)) CPU").font(Pulse.figure)
+                } else {
+                    Text(monitoring ? "Taking the first readings…" : "Monitoring is paused")
+                        .font(Pulse.bodyStrong)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Spacer(minLength: 8)
+            if points.count > 1 {
+                Sparkline(values: points.suffix(36).map { Optional($0) })
+                    .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
+                    .frame(width: 120, height: 30)
+                    .accessibilityHidden(true)
+            }
+        }
+        .frame(height: 44)
+        .accessibilityElement(children: .combine)
+    }
+
+    // Page 3: where to find it, and that an empty list is normal.
+    private var menuBar: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Find it in the menu bar")
+                .font(Pulse.title)
+                .padding(.bottom, 22)
+            MenuBarSketch()
+                .padding(.bottom, 22)
+            Text("Click the pulse icon any time to see recent events and what is using the CPU now. CrashPulse keeps watching while the panel is closed.")
+                .font(Pulse.body)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.bottom, 12)
+            Text("Your event list may be empty for a while. Events appear only when an app stays busy.")
+                .font(Pulse.detail)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var footer: some View {
+        HStack(spacing: 10) {
+            HStack(spacing: 6) {
+                ForEach(0..<Self.pageCount, id: \.self) { index in
+                    Circle()
+                        .fill(index == page ? Color.primary.opacity(0.75) : Color.primary.opacity(0.18))
+                        .frame(width: 6, height: 6)
+                }
+            }
+            .accessibilityElement()
+            .accessibilityLabel("Page \(page + 1) of \(Self.pageCount)")
+            Spacer()
+            if page > 0 {
+                Button("Back") { go(page - 1) }
+                    .keyboardShortcut(.cancelAction)
+            }
+            if page < Self.pageCount - 1 {
+                Button("Continue") { go(page + 1) }
+                    .keyboardShortcut(.defaultAction)
+            } else {
+                Button("Done", action: onFinish)
+                Button("Show Me", action: onShowPanel)
+                    .keyboardShortcut(.defaultAction)
+                    .help("Close this window and open the CrashPulse panel from the menu bar")
+            }
+        }
+        .controlSize(.large)
+        .padding(.horizontal, 24)
+        .padding(.vertical, 20)
+    }
+
+    private func go(_ target: Int) {
+        withAnimation(.easeInOut(duration: 0.18)) { page = min(max(target, 0), Self.pageCount - 1) }
+    }
+}
+
+/// The app's signature trace in miniature: a calm line, a sustained spike inside a tinted span, then calm again.
+private struct WelcomeTrace: View {
+    private static let values: [Double?] = [14, 11, 16, 12, 15, 13, 150, 228, 214, 236, 219, 232, 222, 238, 226, 18, 13, 16, 12, 14]
+    private static let span = (start: 5.5, end: 14.5)
+
+    var body: some View {
+        GeometryReader { proxy in
+            let step = proxy.size.width / CGFloat(Self.values.count - 1)
+            ZStack(alignment: .topLeading) {
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(Pulse.severe.opacity(0.08))
+                    .frame(width: CGFloat(Self.span.end - Self.span.start) * step)
+                    .offset(x: CGFloat(Self.span.start) * step)
+                Path { path in
+                    path.move(to: CGPoint(x: 0, y: proxy.size.height - 0.5))
+                    path.addLine(to: CGPoint(x: proxy.size.width, y: proxy.size.height - 0.5))
+                }
+                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                Sparkline(values: Self.values)
+                    .stroke(Pulse.severe, style: StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
+                    .padding(.vertical, 6)
+            }
+        }
+        .accessibilityHidden(true)
+    }
+}
+
+/// A simplified menu bar with the CrashPulse item highlighted and its panel hanging below.
+private struct MenuBarSketch: View {
+    var body: some View {
+        VStack(alignment: .trailing, spacing: 0) {
+            bar
+            panel
+                .padding(.trailing, 12)
+                .padding(.top, 6)
+        }
+        .accessibilityElement()
+        .accessibilityLabel("The CrashPulse pulse icon in the menu bar opens a panel with Events and Live")
+    }
+
+    private var panel: some View {
+        VStack(spacing: 0) {
+            Triangle()
+                .fill(Color.primary.opacity(0.07))
+                .frame(width: 14, height: 7)
+            VStack(alignment: .leading, spacing: 9) {
+                HStack(spacing: 0) {
+                    Capsule().fill(Color.primary.opacity(0.16)).frame(width: 36, height: 10)
+                    Capsule().fill(Color.clear).frame(width: 36, height: 10)
+                }
+                .padding(2)
+                .background(Capsule().fill(Color.primary.opacity(0.07)))
+                .frame(maxWidth: .infinity)
+                sketchRow(dot: Pulse.severe, width: 64)
+                sketchRow(dot: Pulse.signal, width: 48)
+                sketchRow(dot: Color.secondary, width: 72)
+            }
+            .padding(12)
+            .frame(width: 168)
+            .background(Color.primary.opacity(0.07), in: RoundedRectangle(cornerRadius: 10))
+        }
+    }
+
+    private func sketchRow(dot: Color, width: CGFloat) -> some View {
+        HStack(spacing: 7) {
+            Circle().fill(dot).frame(width: 6, height: 6)
+            Capsule().fill(Color.primary.opacity(0.18)).frame(width: width, height: 5)
+            Spacer(minLength: 0)
+            Capsule().fill(Color.primary.opacity(0.12)).frame(width: 22, height: 5)
+        }
+    }
+
+    private struct Triangle: Shape {
+        func path(in rect: CGRect) -> Path {
+            Path { path in
+                path.move(to: CGPoint(x: rect.midX, y: rect.minY))
+                path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+                path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+                path.closeSubpath()
+            }
+        }
+    }
+
+    private var bar: some View {
+        HStack(spacing: 16) {
+            Spacer()
+            Image(systemName: "wifi")
+            Image(systemName: "battery.75percent")
+            Image(systemName: "waveform.path.ecg")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 34, height: 24)
+                .background(Color.accentColor.opacity(0.14), in: RoundedRectangle(cornerRadius: 6))
+                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.accentColor.opacity(0.6), lineWidth: 1.5))
+            Image(systemName: "magnifyingglass")
+            Image(systemName: "switch.2")
+        }
+        .font(.system(size: 13))
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 16)
+        .frame(height: 40)
+        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10))
+    }
+}
+
 // MARK: - Messages
 
 struct PanelMessage: View {
@@ -1107,6 +1407,7 @@ struct PanelMessage: View {
 
 struct MonitorSettingsView: View {
     @ObservedObject var model: MonitorModel
+    var showWelcome: (() -> Void)? = nil
     @State private var document: JSONDocument?
     @State private var filename = "CrashPulse-diagnostics"
     @State private var exporting = false
@@ -1133,6 +1434,9 @@ struct MonitorSettingsView: View {
             Section("Data and support") {
                 if let version = model.run.appVersion {
                     LabeledContent("Version", value: version)
+                }
+                if let showWelcome, model.run.canRecordHistory {
+                    Button("Show Welcome…", action: showWelcome)
                 }
                 if model.historyError != nil {
                     Label("History can’t be saved right now.", systemImage: "exclamationmark.circle")
@@ -1259,6 +1563,12 @@ enum UIPreviewRenderer {
                               showIgnored: .constant(false), onSelect: { _ in }, onToggleIgnored: { _ in })
             })),
         ]
+        for page in 0..<3 {
+            scenes.append(("8-welcome-\(page + 1)", AnyView(
+                WelcomeView(activity: activity, interval: 5, monitoring: true, startPage: page,
+                            onShowPanel: {}, onFinish: {})
+            )))
+        }
         for (index, event) in fixtures.enumerated() {
             scenes.append(("\(index + 2)-detail", AnyView(panel(.events) {
                 EventDetailView(event: event, onBack: {}, onOpenLive: {}, onToggleIgnored: {})
