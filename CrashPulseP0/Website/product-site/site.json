@@ -1,10 +1,17 @@
 {
   "origin": "https://crashpulse.bettercam.xyz",
   "release": "0.1.0 beta",
+  "seller": null,
   "supportEmail": null,
+  "refundDays": null,
   "sales": {
     "price": null,
     "checkoutUrl": null,
     "checkoutNote": null
+  },
+  "merchantOfRecord": {
+    "name": null,
+    "termsUrl": null,
+    "privacyUrl": null
   }
 }

@@ -6,6 +6,9 @@
 - only web files are in public/, no notes, scripts or config
 - no launch placeholders, unconfirmed business names or payment wording leak into the pages
 - nothing is loaded from another website
+
+It then lists the site.json values that payment provider approval still needs. Those do not
+fail the check, because the preview can go live without them.
 """
 
 import json
@@ -33,6 +36,15 @@ for path in sorted(PUBLIC.rglob("*")):
     if path.is_file() and (path.suffix.lower() not in WEB_TYPES or path.name.startswith(".")):
         problems.append(f"not a web file: {path.relative_to(ROOT)}")
 
+# A configured seller or merchant of record may appear on the pages.
+configured = " ".join(filter(None, [config.get("seller"), (config.get("merchantOfRecord") or {}).get("name")]))
+BLOCKED = [word for word in BLOCKED if not re.search(word, configured, re.I)]
+
+# Links the owner configured on purpose: checkout and the merchant of record's own policies.
+merchant_config = config.get("merchantOfRecord") or {}
+allowed_outside = {url for url in [(config.get("sales") or {}).get("checkoutUrl"),
+                                   merchant_config.get("termsUrl"), merchant_config.get("privacyUrl")] if url}
+
 for page in sorted(PUBLIC.rglob("*.html")) + sorted(PUBLIC.rglob("*.css")):
     text = page.read_text()
     visible = re.sub(r"<!--.*?-->", "", text, flags=re.S)
@@ -45,7 +57,7 @@ for page in sorted(PUBLIC.rglob("*.html")) + sorted(PUBLIC.rglob("*.css")):
         if parsed.scheme == "mailto" or ref.startswith("#") or parsed.scheme == "data":
             continue
         if parsed.scheme or ref.startswith("//"):
-            if not ref.startswith(origin + "/") and ref != (config.get("sales") or {}).get("checkoutUrl"):
+            if not ref.startswith(origin + "/") and ref not in allowed_outside:
                 problems.append(f"{page.name}: loads or links outside the site: {ref}")
             continue
         base = PUBLIC if parsed.path.startswith("/") else page.parent
@@ -65,4 +77,21 @@ if not (PUBLIC / "assets" / "og.png").exists():
 for problem in problems:
     print(problem)
 print("public/ is ready to copy" if not problems else f"{len(problems)} problem(s)")
+
+# Payment provider approval (Creem, FastSpring and similar) needs more than a deployable site.
+sales = config.get("sales") or {}
+merchant = config.get("merchantOfRecord") or {}
+missing = [label for label, ok in [
+    ("support email shown on the site (supportEmail)", config.get("supportEmail")),
+    ("visible price (sales.price)", sales.get("price")),
+    ("refund window (refundDays)", config.get("refundDays")),
+    ("seller named in the terms and footer (seller)", config.get("seller")),
+    ("merchant of record named in terms and privacy (merchantOfRecord.name)", merchant.get("name")),
+] if not ok]
+if missing:
+    print("Not yet ready for payment approval. Still unset in site.json:")
+    for label in missing:
+        print(f"  - {label}")
+else:
+    print("site.json has every value payment approval asks for")
 sys.exit(1 if problems else 0)
