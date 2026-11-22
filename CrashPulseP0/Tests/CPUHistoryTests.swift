@@ -432,6 +432,53 @@ final class CPUHistoryTests: XCTestCase {
         try recorder.stop(now: at(87))
     }
 
+    func testClearingHistoryKeepsTheOngoingEventAndDropsLateFollowUps() throws {
+        let store = try fixtureStore()
+        let recorder = try store.startRecording(intervalSeconds: 5, now: at(0))
+        func other(_ end: Int) -> ProcessRow {
+            sample(from: end - 5, to: end, pid: 40, birth: 43, path: "/tmp/other-fixture")
+        }
+        for end in stride(from: 5, through: 30, by: 5) {
+            try recorder.ingest(snapshot(end, rows: [sample(from: end - 5, to: end), other(end)]))
+        }
+        // The first process exits, so its event ends and waits for follow-up scans.
+        try recorder.ingest(snapshot(35, rows: [other(35)]))
+        let before = recorder.report(now: at(35)).events
+        XCTAssertEqual(before.count, 2)
+        let ongoing = try XCTUnwrap(before.first { $0.endReason == nil })
+        XCTAssertEqual(before.first { $0.endReason != nil }?.forensics?.afterComplete, false)
+
+        try recorder.clearFinishedEvents(now: at(36))
+        XCTAssertEqual(recorder.report(now: at(36)).events.map(\.id), [ongoing.id])
+        XCTAssertEqual(try store.report(now: at(36)).events.map(\.id), [ongoing.id])
+
+        // Follow-up scans for the cleared event must not bring it back.
+        for end in stride(from: 40, through: 60, by: 5) {
+            try recorder.ingest(snapshot(end, rows: [other(end)]))
+        }
+        try recorder.ingest(snapshot(65, rows: []))
+        let remaining = try store.report(now: at(65)).events
+        XCTAssertEqual(remaining.map(\.id), [ongoing.id])
+        XCTAssertEqual(remaining.first?.endReason, .processMissing)
+        try recorder.stop(now: at(66))
+
+        // Without a running recorder the store clears everything and recording can resume.
+        try store.clearEvents(now: at(67))
+        XCTAssertTrue(try store.report(now: at(67)).events.isEmpty)
+        let restarted = try store.startRecording(intervalSeconds: 5, now: at(100))
+        for end in stride(from: 105, through: 130, by: 5) {
+            try restarted.ingest(snapshot(end, rows: [sample(from: end - 5, to: end, birth: 44)]))
+        }
+        XCTAssertEqual(try store.report(now: at(130)).events.count, 1)
+        try restarted.stop(now: at(131))
+    }
+
+    func testClearingAMissingHistoryCreatesNothing() throws {
+        let store = try fixtureStore()
+        try store.clearEvents()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: store.directory.path))
+    }
+
     func testUnsupportedHistoryIsNeverOverwritten() throws {
         let store = try fixtureStore()
         try FileManager.default.createDirectory(at: store.directory, withIntermediateDirectories: false)

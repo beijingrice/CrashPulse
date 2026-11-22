@@ -375,7 +375,8 @@ struct MenuMonitorView: View {
                 EventListView(report: report, showIgnored: $showIgnored,
                               notice: historyReadError ?? eventActionError,
                               onSelect: { selectedEvent = $0.id },
-                              onToggleIgnored: { event in Task { await toggleIgnored(event) } })
+                              onToggleIgnored: { event in Task { await toggleIgnored(event) } },
+                              onClearHistory: { Task { await clearHistory() } })
             }
         } else if let historyReadError {
             PanelMessage(symbol: "exclamationmark.triangle", title: "Events can’t be read", message: historyReadError)
@@ -389,6 +390,18 @@ struct MenuMonitorView: View {
             try await model.setEventIgnored(event.id, ignored: event.ignoredAt == nil)
             eventActionError = nil
             if event.ignoredAt == nil, selectedEvent == event.id, !showIgnored { selectedEvent = nil }
+            await refreshHistory()
+        } catch {
+            eventActionError = error.localizedDescription
+        }
+    }
+
+    private func clearHistory() async {
+        do {
+            try await model.clearHistory()
+            selectedEvent = nil
+            showIgnored = false
+            eventActionError = nil
             await refreshHistory()
         } catch {
             eventActionError = error.localizedDescription
@@ -426,6 +439,8 @@ struct EventListView: View {
     var notice: String?
     let onSelect: (HighCPUEvent) -> Void
     let onToggleIgnored: (HighCPUEvent) -> Void
+    var onClearHistory: () -> Void = {}
+    @State private var confirmingClear = false
 
     private struct Day: Identifiable {
         let id: Date
@@ -495,13 +510,34 @@ struct EventListView: View {
                 .frame(maxHeight: 380)
                 .fixedSize(horizontal: false, vertical: true)
             }
-            if report.events.contains(where: { $0.ignoredAt != nil }) {
-                Toggle("Show ignored events", isOn: $showIgnored)
-                    .toggleStyle(.checkbox)
-                    .font(Pulse.caption)
-                    .padding(.horizontal, Pulse.gutter)
-                    .padding(.bottom, 10)
+            let hasIgnored = report.events.contains { $0.ignoredAt != nil }
+            // An event that is still happening is not history yet, so it alone does not offer Clear.
+            let canClear = report.events.contains { $0.endReason != nil }
+            if hasIgnored || canClear {
+                HStack {
+                    if hasIgnored {
+                        Toggle("Show ignored events", isOn: $showIgnored)
+                            .toggleStyle(.checkbox)
+                    }
+                    Spacer(minLength: 8)
+                    if canClear {
+                        Button("Clear History…") { confirmingClear = true }
+                            .buttonStyle(.borderless)
+                            .foregroundStyle(.secondary)
+                            .help("Remove recorded events from this Mac")
+                    }
+                }
+                .font(Pulse.caption)
+                .padding(.horizontal, Pulse.gutter)
+                .padding(.top, 4)
+                .padding(.bottom, 10)
             }
+        }
+        .confirmationDialog("Clear all recorded events?", isPresented: $confirmingClear) {
+            Button("Clear History", role: .destructive, action: onClearHistory)
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This can’t be undone. An event that’s happening now keeps recording.")
         }
     }
 
@@ -1610,6 +1646,10 @@ enum UIPreviewRenderer {
         let report = CPUHistoryReport(generatedAt: now, policy: HighCPUPolicy(), events: events, batteryToday: nil,
                                       recurringBackgroundActivity: [RecurringActivity(app: PreviewData.indexer, events: 3, days: 3)])
         _ = browser
+        var ignoredEvents = events
+        if let index = ignoredEvents.firstIndex(where: { $0.endReason != nil }) { ignoredEvents[index].ignoredAt = now }
+        let withIgnoredEvent = CPUHistoryReport(generatedAt: now, policy: HighCPUPolicy(), events: ignoredEvents,
+                                                batteryToday: nil, recurringBackgroundActivity: [])
 
         var collector = ProcessCollector()
         _ = collector.collect()
@@ -1626,6 +1666,9 @@ enum UIPreviewRenderer {
         var scenes: [(String, AnyView)] = [
             ("1-events", AnyView(panel(.events) {
                 EventListView(report: report, showIgnored: .constant(false), onSelect: { _ in }, onToggleIgnored: { _ in })
+            })),
+            ("1-events-ignored", AnyView(panel(.events) {
+                EventListView(report: withIgnoredEvent, showIgnored: .constant(true), onSelect: { _ in }, onToggleIgnored: { _ in })
             })),
             ("6-live", AnyView(panel(.live) {
                 LiveView(snapshot: snapshot, activity: activity, monitoring: true, isVisible: true, onResume: {})

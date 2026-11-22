@@ -307,6 +307,14 @@ private actor SamplingWorker {
         }
     }
 
+    func clearHistory() throws {
+        if let history {
+            try history.clearFinishedEvents()
+        } else {
+            try makeStore().clearEvents()
+        }
+    }
+
     #if DEBUG
     func createNotificationTestEvent() throws -> UUID {
         if let history { return try history.createNotificationTestEvent() }
@@ -531,5 +539,9 @@ final class MonitorModel: ObservableObject {
 
     func setEventIgnored(_ id: UUID, ignored: Bool) async throws {
         try await worker.setEventIgnored(id, ignored: ignored)
+    }
+
+    func clearHistory() async throws {
+        try await worker.clearHistory()
     }
 }

@@ -119,6 +119,15 @@ struct CPUHistoryStore {
         try write(file, lock: lock)
     }
 
+    /// Removes every recorded event while no recorder owns the journal. Battery totals are kept.
+    func clearEvents(now: Date = Date()) throws {
+        guard FileManager.default.fileExists(atPath: directory.path) else { return }
+        let lock = try lockForWriting()
+        let file = try recover(now: now, lock: lock)
+        guard !file.events.isEmpty else { return }
+        try write(HistoryFile(events: [], batteryDay: file.batteryDay), lock: lock)
+    }
+
     fileprivate func bounded(_ events: [HighCPUEvent], now: Date) -> [HighCPUEvent] {
         let cutoff = now.addingTimeInterval(-Double(policy.retentionSeconds))
         return Array(events.filter { $0.lastObservedAt > cutoff }.sorted {
@@ -234,6 +243,8 @@ final class CPUHistoryRecorder {
     private var battery: BatteryUsageTracker
     private var events: [HighCPUEvent]
     private var lastAlertByApp: [String: Date]
+    // Follow-up scans can still update an event after it ends. Cleared events must not come back.
+    private var clearedIDs: Set<UUID> = []
     private var dirty = false
     private var batteryDirty = false
     private var needsImmediateWrite = false
@@ -312,6 +323,19 @@ final class CPUHistoryRecorder {
         try commit([], now: now, lock: lock, flush: true)
     }
 
+    /// Removes every finished event. An event that is still in progress keeps recording,
+    /// because it is not history yet. Alert cooldowns stay in memory so clearing cannot re-alert.
+    func clearFinishedEvents(now: Date = Date()) throws {
+        guard let lock else { throw CPUHistoryStore.StoreError.eventNotFound }
+        let finished = events.filter { $0.endReason != nil }.map(\.id)
+        guard !finished.isEmpty else { return }
+        clearedIDs.formUnion(finished)
+        events.removeAll { $0.endReason != nil }
+        nextExpiration = events.last?.lastObservedAt.addingTimeInterval(Double(store.policy.retentionSeconds))
+        dirty = true
+        try commit([], now: now, lock: lock, flush: true)
+    }
+
     func stop(now: Date = Date()) throws {
         guard let lock else { return }
         defer { self.lock = nil }
@@ -321,6 +345,7 @@ final class CPUHistoryRecorder {
 
     private func commit(_ updates: [HighCPUEvent], now: Date, lock: CPUHistoryStore.WriterLock,
                         flush: Bool = false) throws {
+        let updates = clearedIDs.isEmpty ? updates : updates.filter { !clearedIDs.contains($0.id) }
         if !updates.isEmpty {
             var changed = Dictionary(updates.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
             var existingUpdates = 0
