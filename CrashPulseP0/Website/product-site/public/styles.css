@@ -78,7 +78,7 @@ a:hover { color: var(--graphite); }
 .hero { padding-block: clamp(36px, 6vw, 72px) 0; }
 .hero h1 {
   font: 600 clamp(42px, 6.4vw, 80px)/1.02 var(--serif);
-  letter-spacing: -0.025em;
+  letter-spacing: -0.012em;
   margin: 0;
   max-width: 10.5em;
   text-wrap: balance;
@@ -149,7 +149,7 @@ a:hover { color: var(--graphite); }
 section { padding-block: clamp(72px, 10vw, 128px) 0; }
 section > .wrap > h2, .section-head h2 {
   font: 600 clamp(30px, 3.6vw, 44px)/1.1 var(--serif);
-  letter-spacing: -0.015em;
+  letter-spacing: -0.008em;
   margin: 0;
   max-width: 18ch;
 }

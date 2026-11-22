@@ -48,8 +48,9 @@ for page in sorted(PUBLIC.rglob("*.html")) + sorted(PUBLIC.rglob("*.css")):
             if not ref.startswith(origin + "/") and ref != (config.get("sales") or {}).get("checkoutUrl"):
                 problems.append(f"{page.name}: loads or links outside the site: {ref}")
             continue
-        target = (page.parent / parsed.path).resolve()
-        if parsed.path in ("", "./"):
+        base = PUBLIC if parsed.path.startswith("/") else page.parent
+        target = (base / parsed.path.lstrip("/")).resolve()
+        if parsed.path in ("", "./", "/"):
             target = PUBLIC / "index.html"
         if not target.exists():
             problems.append(f"{page.name}: missing {ref}")

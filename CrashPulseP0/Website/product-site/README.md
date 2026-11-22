@@ -6,7 +6,7 @@ The site is separate from the Alipay experiment in `../shop.py`. It does not lin
 
 | Path | Role |
 | --- | --- |
-| `public/` | The web root: `index.html`, `privacy.html`, `styles.css`, `robots.txt`, `sitemap.xml`, `assets/` |
+| `public/` | The web root: `index.html`, `privacy.html`, `404.html`, `styles.css`, `robots.txt`, `sitemap.xml`, `assets/` |
 | `site.json` | Launch settings: domain, release label, support email, price and checkout link |
 | `configure.py` | Writes `site.json` into the marked blocks of the pages and regenerates `robots.txt` and `sitemap.xml` |
 | `check.py` | Pre-deploy check: up to date with `site.json`, links resolve, only web files, no placeholders, no outside resources |
@@ -73,9 +73,10 @@ Each item names who decides and where it goes on the site.
        add_header X-Content-Type-Options nosniff always;
        add_header Referrer-Policy strict-origin-when-cross-origin always;
        add_header Content-Security-Policy "default-src 'self'; img-src 'self' data:; style-src 'self'; frame-ancestors 'none'; base-uri 'none'" always;
+       error_page 404 /404.html;
        location /assets/ { expires 30d; }
    }
    ```
 
    If FastSpring's popup storefront is used instead of a hosted checkout link, extend the policy with the hosts FastSpring documents.
-4. Visit the HTTPS URL and confirm the page, privacy page, screenshots in light and dark, `robots.txt`, `sitemap.xml` and `assets/og.png` load. Check the share preview with a link debugger.
+4. Visit the HTTPS URL and confirm the page, privacy page, a missing path showing `404.html`, screenshots in light and dark, `robots.txt`, `sitemap.xml` and `assets/og.png` load. Check the share preview with a link debugger.
