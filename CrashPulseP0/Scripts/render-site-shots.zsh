@@ -1,5 +1,5 @@
 #!/bin/zsh
-# Regenerates the product site's example screenshots in Website/site/assets/shots.
+# Regenerates the product site's example screenshots in Website/product-site/public/assets/shots.
 # Events and event detail come from the Debug --render-ui sample scenes. Live comes from
 # Scripts/site-live-sample.swift, which compiles the app sources with a fixed sample snapshot,
 # because the --render-ui Live scene shows this Mac's real processes.
@@ -9,7 +9,7 @@ set -euo pipefail
 project=${0:A:h:h}
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
-shots="$project/Website/site/assets/shots"
+shots="$project/Website/product-site/public/assets/shots"
 mkdir -p "$shots"
 
 xcodebuild -project "$project/CrashPulseP0.xcodeproj" -scheme CrashPulse-Sandbox-Off -configuration Debug \

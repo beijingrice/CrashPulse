@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-// Renders the Live panel from a fixed sample snapshot for the product site (Website/site).
+// Renders the Live panel from a fixed sample snapshot for the product site (Website/product-site).
 // Built by Scripts/render-site-shots.zsh together with the app sources; it is not part of the app.
 // Compiled against the app sources without changing them.
 @MainActor
