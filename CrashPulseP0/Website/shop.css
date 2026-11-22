@@ -18,12 +18,7 @@ p { line-height: 1.65; }
 a { color: #92baff; }
 .amount { font-size: 1.6rem; font-weight: 700; font-variant-numeric: tabular-nums; }
 .note { color: #c4d7ff; padding: .7rem 1rem; background: #1a2a44; border-radius: .5rem; }
-.error { color: #ffb3b3; }
-label { display: block; font-weight: 650; }
-input { display: block; width: 100%; font: inherit; padding: .65rem .8rem;
-  border: 1px solid #687691; border-radius: .45rem; margin: .7rem 0 1rem; }
 button, .button { display: inline-block; color: #101a2d; background: #aac8ff;
   border: 0; border-radius: .5rem; font: inherit; font-weight: 700;
   text-decoration: none; padding: .7rem 1.1rem; cursor: pointer; }
 :focus-visible { outline: 2px solid #c0d7ff; outline-offset: 3px; }
-img { display: block; width: min(100%, 196px); height: auto; background: white; border-radius: .4rem; }

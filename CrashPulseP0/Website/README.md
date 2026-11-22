@@ -1,36 +1,29 @@
 # CrashPulse website
 
-A small storefront for the notarized disk image. The buyer submits an Alipay transaction number and keeps the private order page. The merchant reviews the actual transaction in the Alipay merchant dashboard before unlocking the DMG. Order status and approval live in SQLite.
+The store creates an order and sends the buyer to the Alipay desktop checkout (`alipay.trade.page.pay`). Alipay sends an RSA2-signed server notification to `/payment/alipay/notify`. The store verifies the signature, merchant, app, order, amount, and trade status before unlocking the notarized DMG. The buyer's private order page checks that state and displays the download automatically.
 
-## Local preview
+## Verify locally
 
-From the repository root, use Python 3.9 or later.
+Run `python3 -m unittest -v test_shop` from this directory with Python 3.9 or later and OpenSSL on PATH. The tests create temporary RSA keys and simulate Alipay notifications through the WSGI app. They use a throwaway SQLite DB and test download.
 
-```sh
-cd CrashPulseP0/Website
-mkdir -p ../.build/website-preview
-export CRASHPULSE_ORDERS_DB="$PWD/../.build/website-preview/orders.sqlite3"
-export CRASHPULSE_DMG="$PWD/../.build/dmg-20261122/CrashPulse-0.1.0-beta.dmg"
-export CRASHPULSE_PRICE_CENTS=1900
-python3 shop.py serve
-```
+## Configure Alipay
 
-Open `http://127.0.0.1:8080/`. The sample price is for testing. With no QR image configured, the page displays a test message and accepts mock transaction numbers for local verification.
+Open a web application in Alipay Open Platform and apply for **电脑网站支付**. Configure the platform public key and merchant application private key as separate PEM files on the server. Use the public key labeled 支付宝公钥 for notification verification. The server's signing key is the merchant application private key. Restrict that file to the service account. [Alipay website-pay setup](https://aipay.alipay.com/article/3470)
 
-## Review a payment
+Set these variables in the service environment:
 
-Run the commands on the host with the same environment as the website.
+| Variable | Value |
+| --- | --- |
+| `CRASHPULSE_PUBLIC_ORIGIN` | Public HTTPS site origin, for example `https://crashpulse.example` |
+| `CRASHPULSE_PRICE_CENTS` | Final price in fen |
+| `CRASHPULSE_ORDERS_DB` | SQLite path in a private writable directory |
+| `CRASHPULSE_DMG` | Absolute path to the notarized release DMG outside the public directory |
+| `ALIPAY_APP_ID` | Alipay web application ID |
+| `ALIPAY_SELLER_ID` | The seller's Alipay merchant ID used in `seller_id` |
+| `ALIPAY_APP_PRIVATE_KEY` | Path to the merchant application's private PEM key |
+| `ALIPAY_PLATFORM_PUBLIC_KEY` | Path to the Alipay platform's public PEM key |
+| `ALIPAY_ENV` | `sandbox` for sandbox credentials, `production` for the live merchant account |
 
-```sh
-python3 shop.py pending
-python3 shop.py confirm ORDER_REFERENCE --transaction VERIFIED_ALIPAY_TRANSACTION --paid-cents VERIFIED_AMOUNT_IN_FEN
-```
+Keep independent SQLite databases and keys for the sandbox and live store. Run `python3 shop.py init` and serve `shop:application` with the host's production WSGI server behind HTTPS. `python3 shop.py serve` is a loopback preview. Alipay needs to reach `POST /payment/alipay/notify` on the public server. Its browser return path is `/payment/alipay/return`.
 
-Use the merchant ledger to verify the full transaction number, successful payment status, amount, payee, and payment time against the pending order. Match the order remark if the Alipay payment page supports remarks. For an ambiguous payment, resolve the match with the buyer before approving. The submitted transaction number is a lookup reference. One merchant transaction can unlock one order. The buyer refreshes the private order page to download.
-
-## Deploy on the Hong Kong server
-
-- Confirm with Alipay that the merchant's product and QR code support remote checkout for software sold on a website. Set the real price, `CRASHPULSE_MERCHANT` to the displayed payee name, and `CRASHPULSE_QR_PNG` to an approved PNG file. Keep the demo database separate from live orders.
-- Store the QR, SQLite DB, and signed DMG outside any publicly served directory. Give the web service read access to the two files and write access to its SQLite data directory. Use `python3 shop.py init` to prepare the database, then serve the WSGI callable `shop:application` with the host's production WSGI server behind HTTPS.
-- Rate-limit order creation at the reverse proxy and suppress full order URLs in access logs. The URL grants access to the order and its download. Keep the SQLite DB backed up and restrict approval to the server operator.
-- Before accepting real payments, add the final seller identity, support contact, invoicing and refund terms, and order data notice to the purchase page. Verify the live flow with the approved Alipay merchant product.
+Rate-limit order creation at the reverse proxy and suppress private order URLs in access logs. Before accepting real payments, add the seller identity, support contact, invoicing and refund terms, and order data notice to the purchase page. Test an Alipay sandbox purchase through the public callback before enabling live payments.
