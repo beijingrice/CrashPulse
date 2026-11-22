@@ -31,6 +31,7 @@ struct HighCPUEvent: Codable, Equatable, Identifiable {
     var incompleteAppSamples: Bool? = nil
     var forensics: EventEvidence? = nil
     var ignoredAt: Date? = nil
+    var backgroundAlert: BackgroundAlertMark? = nil
     // Present only while reading a version 1 history file.
     var observedCPUEnergyJoules: Double? = nil
 
@@ -76,6 +77,8 @@ struct HighCPUTracker {
         let startedAt: Date
         let endedAt: Date
         let duration: Double
+        let startTicks: UInt64
+        let endTicks: UInt64
         let cpu: Double
         let energy: Double?
         let complete: Bool
@@ -100,6 +103,8 @@ struct HighCPUTracker {
             self.startedAt = startedAt
             self.endedAt = endedAt
             self.duration = duration
+            self.startTicks = startTicks
+            self.endTicks = endTicks
             self.complete = complete
             cpu = members.reduce(0) { $0 + $1.cpu }
             let measuredEnergy = members.compactMap { member in
@@ -139,6 +144,14 @@ struct HighCPUTracker {
     private struct Streak {
         var event: HighCPUEvent
         var endpoints: [Instance: UInt64]
+        var background: BackgroundCPUWindow?
+        var backgroundEndTicks: UInt64?
+        var alerted = false
+    }
+
+    struct AlertScan {
+        let foreground: BackgroundForeground
+        let mayAlert: (UUID, String) -> Bool
     }
 
     private struct AppMembers {
@@ -155,13 +168,15 @@ struct HighCPUTracker {
     private var pathGroups: [String: PathGroup] = [:]
     private let policy: HighCPUPolicy
     private let maximumInterval: Double
+    private(set) var alerts: [BackgroundCPUAlert] = []
 
     init(policy: HighCPUPolicy, intervalSeconds: Int) {
         self.policy = policy
         maximumInterval = Double(intervalSeconds * 2)
     }
 
-    mutating func ingest(_ snapshot: Snapshot) -> [HighCPUEvent] {
+    mutating func ingest(_ snapshot: Snapshot, alertScan: AlertScan? = nil) -> [HighCPUEvent] {
+        alerts.removeAll(keepingCapacity: true)
         guard snapshot.enumerationIssue == nil else { return endAll(.samplingGap) }
         var apps: [String: AppMembers] = [:]
         var updates: [HighCPUEvent] = []
@@ -180,13 +195,13 @@ struct HighCPUTracker {
                 apps[group.id, default: AppMembers(group: group)].rows.append(row)
             } else {
                 observe(.process(row.pid), app: nil, rows: [row], next: &next,
-                        observedBaselines: &observedBaselines, updates: &updates)
+                        observedBaselines: &observedBaselines, updates: &updates, alertScan: alertScan)
             }
         }
 
         for app in apps.values {
             observe(.app(app.group.id), app: app.group, rows: app.rows, next: &next,
-                    observedBaselines: &observedBaselines, updates: &updates)
+                    observedBaselines: &observedBaselines, updates: &updates, alertScan: alertScan)
         }
         updates.append(contentsOf: streaks.values.compactMap { finish($0, reason: .processMissing) })
         streaks = next
@@ -196,7 +211,8 @@ struct HighCPUTracker {
     }
 
     private mutating func observe(_ unit: Unit, app: ProcessGroup?, rows: [ProcessRow], next: inout [Unit: Streak],
-                                  observedBaselines: inout [Unit: Baseline], updates: inout [HighCPUEvent]) {
+                                  observedBaselines: inout [Unit: Baseline], updates: inout [HighCPUEvent],
+                                  alertScan: AlertScan?) {
         let prior = streaks.removeValue(forKey: unit)
         let members = rows.compactMap(member)
         let complete = members.count == rows.count
@@ -252,8 +268,38 @@ struct HighCPUTracker {
             streak.event.path = reading.lead.row.path ?? streak.event.path
         }
         streak.endpoints = endpoints
-        if streak.event.observedDurationSeconds >= policy.minimumDurationSeconds { updates.append(streak.event) }
+        if let alert = Self.evaluateAlert(&streak, reading: reading, rows: rows, scan: alertScan) {
+            alerts.append(alert)
+        }
+        if streak.alerted || streak.event.observedDurationSeconds >= policy.minimumDurationSeconds {
+            updates.append(streak.event)
+        }
         next[unit] = streak
+    }
+
+    private static func evaluateAlert(_ streak: inout Streak, reading: Reading, rows: [ProcessRow],
+                                      scan: AlertScan?) -> BackgroundCPUAlert? {
+        guard !streak.alerted, let scan, reading.complete,
+              let appKey = reading.app?.id ?? reading.lead.row.path, appKey.hasPrefix("/"),
+              scan.foreground.includesBackground(appKey: appKey, pids: rows.map(\.pid), from: reading.startTicks)
+        else {
+            streak.background = nil
+            streak.backgroundEndTicks = nil
+            return nil
+        }
+        let start = max(reading.startTicks, streak.backgroundEndTicks ?? 0)
+        guard start < reading.endTicks else { return nil }
+        let seconds = reading.duration * Double(reading.endTicks - start) / Double(reading.endTicks - reading.startTicks)
+        if streak.background == nil { streak.background = BackgroundCPUWindow() }
+        streak.background?.append(cpu: reading.cpu, seconds: seconds)
+        streak.backgroundEndTicks = reading.endTicks
+        let name = reading.app?.name ?? reading.lead.row.name ?? (appKey as NSString).lastPathComponent
+        guard let alert = streak.background?.alert(eventID: streak.event.id, name: name),
+              scan.mayAlert(streak.event.id, appKey) else { return nil }
+        streak.event.backgroundAlert = BackgroundAlertMark(appKey: appKey, at: reading.endedAt)
+        streak.background = nil
+        streak.alerted = true
+        return alert
     }
 
     mutating func endAll(_ reason: HighCPUEvent.EndReason) -> [HighCPUEvent] {
@@ -283,7 +329,8 @@ struct HighCPUTracker {
     }
 
     private func finish(_ streak: Streak?, reason: HighCPUEvent.EndReason) -> HighCPUEvent? {
-        guard let streak, streak.event.observedDurationSeconds >= policy.minimumDurationSeconds else { return nil }
+        guard let streak, streak.alerted || streak.event.observedDurationSeconds >= policy.minimumDurationSeconds
+        else { return nil }
         var event = streak.event
         event.endReason = reason
         return event

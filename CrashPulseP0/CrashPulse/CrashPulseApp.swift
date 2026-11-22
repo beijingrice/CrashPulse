@@ -19,8 +19,15 @@ final class CrashPulseDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
     private var settingsWindow: NSWindow?
     private var welcomeWindow: NSWindow?
     private var wakeObserver: NSObjectProtocol?
+    private var activationObserver: NSObjectProtocol?
     /// Set once the welcome window has been seen. Launch with `-showWelcome YES` to show it again.
     private static let welcomeCompletedKey = "welcomeCompleted"
+
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        guard model.run.canRecordHistory else { return }
+        model.notifications.onOpenEvent = { [weak self] id in self?.openEvent(id) }
+        model.notifications.installDelegate()
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         installStatusItem()
@@ -29,9 +36,31 @@ final class CrashPulseDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         ) { [weak self] _ in
             Task { @MainActor in self?.model.woke() }
         }
+        if model.run.canRecordHistory {
+            activationObserver = NSWorkspace.shared.notificationCenter.addObserver(
+                forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
+            ) { [weak self] notification in
+                let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+                let identity = MonitorModel.foregroundIdentity(app)
+                MainActor.assumeIsolated {
+                    self?.model.foregroundChanged(identity)
+                }
+            }
+            refreshAlertPermission()
+        }
         let firstLaunch = shouldShowWelcome()
         model.startIfEnabled()
-        if firstLaunch { showWelcome() }
+        if model.eventNavigation != nil { showPopover() }
+        else if firstLaunch { showWelcome() }
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        refreshAlertPermission()
+    }
+
+    private func refreshAlertPermission() {
+        guard model.run.canRecordHistory else { return }
+        Task { await model.notifications.refreshPermission() }
     }
 
     /// True on a genuine first launch. People who used CrashPulse before the welcome existed already
@@ -74,6 +103,9 @@ final class CrashPulseDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         if let wakeObserver {
             NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver)
         }
+        if let activationObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(activationObserver)
+        }
     }
 
     private func installStatusItem() {
@@ -111,6 +143,17 @@ final class CrashPulseDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         popover.contentViewController?.view.window?.makeKey()
     }
 
+    private func openEvent(_ id: UUID) {
+        model.eventNavigation = MonitorModel.EventNavigation(eventID: id)
+        guard statusItem != nil else { return }
+        NSApp.activate()
+        if popover.isShown {
+            popover.contentViewController?.view.window?.makeKey()
+        } else {
+            showPopover()
+        }
+    }
+
     func popoverWillShow(_ notification: Notification) {
         model.panelVisible = true
     }
@@ -121,6 +164,7 @@ final class CrashPulseDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
 
     private func showSettings() {
         popover.performClose(nil)
+        refreshAlertPermission()
         if settingsWindow == nil {
             let host = NSHostingController(rootView: MonitorSettingsView(model: model, showWelcome: { [weak self] in
                 self?.settingsWindow?.close()
@@ -183,6 +227,7 @@ private actor SamplingWorker {
         let snapshot: Snapshot
         let historyError: String?
         let activity: [ActivityPoint]
+        let alerts: [BackgroundCPUAlert]
     }
 
     private var collector = ProcessCollector()
@@ -190,6 +235,11 @@ private actor SamplingWorker {
     private var historyStore: CPUHistoryStore?
     private var historyError: String?
     private var interval = 5
+    private let historyDirectory: URL?
+
+    init(historyDirectory: URL? = nil) {
+        self.historyDirectory = historyDirectory
+    }
 
     func reset(interval: Int, recordHistory: Bool) -> MachTimebase {
         collector = ProcessCollector()
@@ -197,7 +247,7 @@ private actor SamplingWorker {
         self.interval = interval
         if recordHistory {
             do {
-                historyStore = try Self.defaultStore()
+                historyStore = try makeStore()
             } catch {
                 reportHistoryError(error)
             }
@@ -205,19 +255,28 @@ private actor SamplingWorker {
         return collector.timebase
     }
 
-    func collect(resetForWake: Bool, foregroundPID: Int32?) -> Reading {
+    func collect(resetForWake: Bool, foregroundPID: Int32?) -> Snapshot {
         var snapshot = collector.collect(resetForWake: resetForWake)
         snapshot.foregroundPID = foregroundPID
+        return snapshot
+    }
+
+    func record(_ snapshot: Snapshot, background: BackgroundForeground?) -> Reading {
+        var alerts: [BackgroundCPUAlert] = []
         if let historyStore {
             do {
                 if history == nil { history = try historyStore.startRecording(intervalSeconds: interval) }
-                try history?.ingest(snapshot)
+                alerts = try history?.ingest(snapshot, background: background) ?? []
                 historyError = nil
             } catch {
                 reportHistoryError(error)
             }
         }
-        return Reading(snapshot: snapshot, historyError: historyError, activity: history?.activity ?? [])
+        return Reading(snapshot: snapshot, historyError: historyError, activity: history?.activity ?? [], alerts: alerts)
+    }
+
+    func collectAndRecord(resetForWake: Bool, foregroundPID: Int32?) -> Reading {
+        record(collect(resetForWake: resetForWake, foregroundPID: foregroundPID), background: nil)
     }
 
     func stop() -> String? {
@@ -237,19 +296,29 @@ private actor SamplingWorker {
 
     func historyReport() throws -> CPUHistoryReport {
         if let history { return history.report() }
-        return try Self.defaultStore().report()
+        return try makeStore().report()
     }
 
     func setEventIgnored(_ id: UUID, ignored: Bool) throws {
         if let history {
             try history.setIgnored(ignored, id: id)
         } else {
-            try Self.defaultStore().setIgnored(ignored, id: id)
+            try makeStore().setIgnored(ignored, id: id)
         }
     }
 
-    private static func defaultStore() throws -> CPUHistoryStore {
-        try CPUHistoryStore(directory: CPUHistoryStore.defaultDirectory(), policy: HighCPUPolicy())
+    #if DEBUG
+    func createNotificationTestEvent() throws -> UUID {
+        if let history { return try history.createNotificationTestEvent() }
+        let recorder = try makeStore().startRecording(intervalSeconds: interval)
+        let id = try recorder.createNotificationTestEvent()
+        try recorder.stop()
+        return id
+    }
+    #endif
+
+    private func makeStore() throws -> CPUHistoryStore {
+        try CPUHistoryStore(directory: historyDirectory ?? CPUHistoryStore.defaultDirectory(), policy: HighCPUPolicy())
     }
 
     private func reportHistoryError(_ error: Error) {
@@ -263,15 +332,25 @@ private actor SamplingWorker {
 
 @MainActor
 final class MonitorModel: ObservableObject {
+    struct EventNavigation: Equatable {
+        let id = UUID()
+        let eventID: UUID
+    }
+
     @Published private(set) var interval: Int
     @Published private(set) var monitoringEnabled: Bool
     @Published private(set) var snapshot: Snapshot?
     @Published private(set) var historyError: String?
     @Published private(set) var activity: [ActivityPoint] = []
     @Published var panelVisible = false
+    @Published var eventNavigation: EventNavigation?
     let run = RunInfo.current()
+    let notifications = BackgroundNotifications()
 
-    private let worker = SamplingWorker()
+    private let worker: SamplingWorker
+    private var foreground: BackgroundForeground?
+    private var departedApps: [String: UInt64] = [:]
+    private var backgroundGraceTicks: UInt64 = 0
     private var task: Task<Void, Never>?
     private var wakeGeneration = 0
     private var snapshotInterval = 5
@@ -282,6 +361,11 @@ final class MonitorModel: ObservableObject {
     private let enabledKey = "monitoringEnabled"
 
     init() {
+        #if DEBUG
+        worker = SamplingWorker(historyDirectory: Self.debugAlertDirectory)
+        #else
+        worker = SamplingWorker()
+        #endif
         let saved = defaults.integer(forKey: intervalKey)
         interval = DiagnosticCapture.intervals.contains(saved) ? saved : 5
         monitoringEnabled = defaults.object(forKey: enabledKey) as? Bool ?? true
@@ -323,14 +407,30 @@ final class MonitorModel: ObservableObject {
                 self?.startIfEnabled()
             }
             let timebase = await worker.reset(interval: interval, recordHistory: recordHistory)
+            if timebase.isValid {
+                self?.backgroundGraceTicks = UInt64(10_000_000_000 * Double(timebase.denominator) / Double(timebase.numerator))
+            }
             let clock = SuspendingClock()
             var deadline = clock.now
             var previousWake = self?.wakeGeneration
             while !Task.isCancelled, let self {
                 let currentWake = wakeGeneration
-                let foreground = NSWorkspace.shared.frontmostApplication?.processIdentifier
-                let result = await worker.collect(resetForWake: currentWake != previousWake,
-                                                  foregroundPID: foreground)
+                let frontmost = NSWorkspace.shared.frontmostApplication
+                let result: SamplingWorker.Reading
+                if let before = foregroundForAlerts(frontmost) {
+                    let collected = await worker.collect(resetForWake: currentWake != previousWake,
+                                                         foregroundPID: frontmost?.processIdentifier)
+                    guard !Task.isCancelled else { break }
+                    if currentWake != wakeGeneration {
+                        deadline = clock.now
+                        continue
+                    }
+                    let after = foregroundForAlerts(NSWorkspace.shared.frontmostApplication)
+                    result = await worker.record(collected, background: before == after ? after : nil)
+                } else {
+                    result = await worker.collectAndRecord(resetForWake: currentWake != previousWake,
+                                                           foregroundPID: frontmost?.processIdentifier)
+                }
                 guard !Task.isCancelled else { break }
                 if currentWake != wakeGeneration {
                     deadline = clock.now
@@ -342,6 +442,7 @@ final class MonitorModel: ObservableObject {
                 snapshotInterval = interval
                 snapshotTimebase = timebase
                 previousWake = currentWake
+                if !result.alerts.isEmpty { await notifications.deliver(result.alerts) }
                 deadline += .seconds(interval)
                 if deadline <= clock.now {
                     deadline = clock.now + .seconds(interval)
@@ -360,6 +461,56 @@ final class MonitorModel: ObservableObject {
     func woke() {
         wakeGeneration += 1
     }
+
+    nonisolated static func foregroundIdentity(_ app: NSRunningApplication?) -> (pid: Int32, key: String)? {
+        guard let app else { return nil }
+        let path = app.bundleURL?.path
+        let appKey = path.flatMap { ProcessGroup.bundle(for: $0 + "/Contents/")?.id ?? $0 }
+            ?? app.executableURL?.path
+        guard let appKey else { return nil }
+        return (app.processIdentifier, appKey)
+    }
+
+    func foregroundChanged(_ identity: (pid: Int32, key: String)?) {
+        guard notifications.canEvaluate else {
+            foreground = nil
+            departedApps.removeAll(keepingCapacity: true)
+            return
+        }
+        let now = mach_absolute_time()
+        if let previous = foreground {
+            guard previous.pid != identity?.pid || previous.appKey != identity?.key else { return }
+            departedApps = departedApps.filter { $0.value > now }
+            departedApps[previous.appKey] = now + backgroundGraceTicks
+        }
+        foreground = identity.map {
+            BackgroundForeground(pid: $0.pid, appKey: $0.key, observedSince: now, graceUntil: departedApps)
+        }
+    }
+
+    private func foregroundForAlerts(_ app: NSRunningApplication?) -> BackgroundForeground? {
+        guard notifications.canEvaluate else {
+            foreground = nil
+            return nil
+        }
+        foregroundChanged(Self.foregroundIdentity(app))
+        return foreground
+    }
+
+    #if DEBUG
+    static var debugAlertDirectory: URL? {
+        let arguments = CommandLine.arguments
+        guard let index = arguments.firstIndex(of: "--debug-background-alerts"),
+              let path = arguments.dropFirst(index + 1).first, path.hasPrefix("/") else { return nil }
+        return URL(fileURLWithPath: path, isDirectory: true)
+    }
+
+    func sendNotificationTest() async throws {
+        guard Self.debugAlertDirectory != nil, notifications.canEvaluate else { return }
+        let id = try await worker.createNotificationTestEvent()
+        try await notifications.deliverTest(eventID: id)
+    }
+    #endif
 
     func prepareToQuit() async {
         quitting = true

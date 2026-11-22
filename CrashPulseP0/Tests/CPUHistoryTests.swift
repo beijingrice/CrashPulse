@@ -64,6 +64,173 @@ final class CPUHistoryTests: XCTestCase {
         }
     }
 
+    private var backgroundForeground: BackgroundForeground {
+        BackgroundForeground(pid: 900, appKey: "/Applications/Foreground.app", observedSince: 0)
+    }
+
+    private func backgroundScan(_ recorder: CPUHistoryRecorder, from start: Int, to end: Int,
+                                cpu: Double, foreground: BackgroundForeground?, birth: UInt64 = 42,
+                                path: String = "/tmp/fixture") throws -> [BackgroundCPUAlert] {
+        try recorder.ingest(snapshot(end, rows: [sample(from: start, to: end, cpu: cpu, birth: birth, path: path)]),
+                            background: foreground)
+    }
+
+    func testForegroundAndDisabledAlertsKeepRecordingWithoutNotifying() throws {
+        let denied = BackgroundAlertPermission.denied
+        XCTAssertFalse(denied.allowsDelivery)
+        XCTAssertFalse(BackgroundAlertPermission.notRequested.allowsDelivery)
+        XCTAssertTrue(BackgroundAlertPermission.quiet.allowsDelivery)
+        let foreground = BackgroundForeground(pid: 900, appKey: "/Applications/Fixture.app", observedSince: 0)
+        let path = foreground.appKey + "/Contents/Helpers/Worker.app/Contents/MacOS/worker"
+        for observation in [foreground, denied.allowsDelivery ? backgroundForeground : nil] {
+            let store = try fixtureStore()
+            let recorder = try store.startRecording(intervalSeconds: 5, now: at(0))
+            for end in stride(from: 5, through: 90, by: 5) {
+                XCTAssertTrue(try backgroundScan(recorder, from: end - 5, to: end, cpu: 200,
+                                                 foreground: observation, path: path).isEmpty)
+            }
+            let event = try XCTUnwrap(recorder.report(now: at(90)).events.first)
+            XCTAssertEqual(event.observedDurationSeconds, 90)
+            XCTAssertNil(event.backgroundAlert)
+        }
+    }
+
+    func testSustainedBackgroundAlertIsDeliveredOnceAndFinalizesSameEvent() throws {
+        let store = try fixtureStore()
+        let recorder = try store.startRecording(intervalSeconds: 5, now: at(0))
+        var alerts: [BackgroundCPUAlert] = []
+        for end in stride(from: 5, through: 70, by: 5) {
+            let current = try backgroundScan(recorder, from: end - 5, to: end, cpu: 120, foreground: backgroundForeground)
+            XCTAssertEqual(current.count, end == 60 ? 1 : 0)
+            alerts.append(contentsOf: current)
+        }
+        let alert = try XCTUnwrap(alerts.first)
+        XCTAssertEqual(alert.level, .sustained)
+        XCTAssertEqual(alert.averageCPU, 120)
+        XCTAssertEqual(alert.seconds, 60)
+        let open = try XCTUnwrap(store.report(now: at(70)).events.first)
+        XCTAssertEqual(open.id, alert.eventID)
+        XCTAssertNil(open.endReason)
+        XCTAssertNotNil(open.backgroundAlert)
+        XCTAssertTrue(try backgroundScan(recorder, from: 70, to: 75, cpu: 0, foreground: backgroundForeground).isEmpty)
+        let ended = try XCTUnwrap(store.report(now: at(75)).events.first)
+        XCTAssertEqual(ended.id, open.id)
+        XCTAssertEqual(ended.endReason, .belowThreshold)
+    }
+
+    func testSevereAlertPersistsAnOngoingEventBeforeTheUsualThirtySeconds() throws {
+        let store = try fixtureStore()
+        let recorder = try store.startRecording(intervalSeconds: 5, now: at(0))
+        var alerts: [BackgroundCPUAlert] = []
+        for end in stride(from: 5, through: 25, by: 5) {
+            let current = try backgroundScan(recorder, from: end - 5, to: end, cpu: 300, foreground: backgroundForeground)
+            XCTAssertEqual(current.count, end == 20 ? 1 : 0)
+            alerts.append(contentsOf: current)
+        }
+        let alert = try XCTUnwrap(alerts.first)
+        XCTAssertEqual(alert.level, .severe)
+        let open = try XCTUnwrap(store.report(now: at(25)).events.first)
+        XCTAssertEqual(open.id, alert.eventID)
+        XCTAssertEqual(open.observedDurationSeconds, 20)
+        XCTAssertNil(open.endReason)
+        XCTAssertTrue(try backgroundScan(recorder, from: 25, to: 30, cpu: 0, foreground: backgroundForeground).isEmpty)
+        let ended = try XCTUnwrap(store.report(now: at(30)).events.first)
+        XCTAssertEqual(ended.id, alert.eventID)
+        XCTAssertEqual(ended.endReason, .belowThreshold)
+    }
+
+    func testBriefHighCPUAndSustainedEightyPercentDoNotAlert() throws {
+        let store = try fixtureStore()
+        let recorder = try store.startRecording(intervalSeconds: 5, now: at(0))
+        for end in stride(from: 5, through: 100, by: 5) {
+            let cpu: Double = end == 5 ? 300 : (end == 10 ? 0 : 80)
+            XCTAssertTrue(try backgroundScan(recorder, from: end - 5, to: end, cpu: cpu,
+                                             foreground: backgroundForeground).isEmpty)
+        }
+        XCTAssertEqual(try XCTUnwrap(recorder.report(now: at(100)).events.first).observedDurationSeconds, 90)
+    }
+
+    func testForegroundTransitionAndUncertainSampleResetBackgroundWindow() throws {
+        let store = try fixtureStore()
+        let recorder = try store.startRecording(intervalSeconds: 5, now: at(0))
+        let foreground = BackgroundForeground(pid: 30, appKey: "/tmp/fixture", observedSince: 0)
+        for end in [5, 10, 15, 20] {
+            XCTAssertTrue(try backgroundScan(recorder, from: end - 5, to: end, cpu: 300, foreground: foreground).isEmpty)
+        }
+        let switched = BackgroundForeground(pid: 900, appKey: "/Applications/Foreground.app", observedSince: 20,
+                                             graceUntil: ["/tmp/fixture": 30])
+        for end in stride(from: 25, through: 75, by: 5) {
+            let observation = end == 50 ? nil : switched
+            let alerts = try backgroundScan(recorder, from: end - 5, to: end, cpu: 300,
+                                            foreground: observation)
+            XCTAssertEqual(alerts.count, end == 70 ? 1 : 0)
+        }
+        XCTAssertEqual(recorder.report(now: at(75)).events.count, 1)
+    }
+
+    func testFailedAlertWritePreventsDeliveryAndCanRecoverHistory() throws {
+        let store = try fixtureStore()
+        let recorder = try store.startRecording(intervalSeconds: 5, now: at(0))
+        for end in [5, 10, 15] {
+            XCTAssertTrue(try backgroundScan(recorder, from: end - 5, to: end, cpu: 300,
+                                             foreground: backgroundForeground).isEmpty)
+        }
+        try FileManager.default.createDirectory(at: store.fileURL, withIntermediateDirectories: false)
+        XCTAssertThrowsError(try backgroundScan(recorder, from: 15, to: 20, cpu: 300,
+                                                 foreground: backgroundForeground))
+        try FileManager.default.removeItem(at: store.fileURL)
+        XCTAssertTrue(try backgroundScan(recorder, from: 20, to: 25, cpu: 300,
+                                         foreground: backgroundForeground).isEmpty)
+        let event = try XCTUnwrap(store.report(now: at(25)).events.first)
+        XCTAssertEqual(event.observedDurationSeconds, 25)
+        XCTAssertNotNil(event.backgroundAlert)
+    }
+
+    func testIrregularWindowsUseWeightedAverageAndGapResetsEvidence() throws {
+        let store = try fixtureStore()
+        let recorder = try store.startRecording(intervalSeconds: 5, now: at(0))
+        for (start, end, cpu) in [(0, 8, 300.0), (8, 16, 300.0), (18, 28, 260.0), (28, 35, 300.0)] {
+            XCTAssertTrue(try backgroundScan(recorder, from: start, to: end, cpu: cpu,
+                                             foreground: backgroundForeground).isEmpty)
+        }
+        let alerts = try backgroundScan(recorder, from: 35, to: 38, cpu: 120, foreground: backgroundForeground)
+        XCTAssertEqual(try XCTUnwrap(alerts.first).averageCPU, 253, accuracy: 0.001)
+    }
+
+    func testCooldownSurvivesRelaunchAndUUIDRoutingSurvivesPIDReuse() throws {
+        let store = try fixtureStore()
+        let first = try store.startRecording(intervalSeconds: 5, now: at(0))
+        var firstAlert: BackgroundCPUAlert?
+        for end in [5, 10, 15, 20] {
+            firstAlert = try backgroundScan(first, from: end - 5, to: end, cpu: 300,
+                                            foreground: backgroundForeground).first
+        }
+        let original = try XCTUnwrap(firstAlert?.eventID)
+        try first.stop(now: at(21))
+        let next = try store.startRecording(intervalSeconds: 5, now: at(60))
+        XCTAssertTrue(try next.ingest(snapshot(60, rows: []), background: backgroundForeground).isEmpty)
+        for end in stride(from: 65, through: 100, by: 5) {
+            XCTAssertTrue(try backgroundScan(next, from: end - 5, to: end, cpu: 300,
+                                             foreground: backgroundForeground, birth: 99).isEmpty)
+        }
+        let report = next.report(now: at(100))
+        XCTAssertEqual(report.events.count, 2)
+        XCTAssertEqual(report.events.first?.identity.pid, report.events.last?.identity.pid)
+        XCTAssertEqual(BackgroundCPUAlert.eventID(in: ["eventID": original.uuidString]), original)
+        XCTAssertEqual(BackgroundCPUAlert.destination(for: original, in: report), original)
+        XCTAssertNil(BackgroundCPUAlert.destination(for: UUID(), in: report))
+        XCTAssertNil(BackgroundCPUAlert.eventID(in: ["eventID": "30"]))
+        try next.setIgnored(true, id: original, now: at(100))
+        XCTAssertNil(BackgroundCPUAlert.destination(for: original, in: next.report(now: at(100))))
+        var rearmed: [BackgroundCPUAlert] = []
+        for end in [905, 910, 915, 920, 925] {
+            rearmed += try backgroundScan(next, from: end - 5, to: end, cpu: 300,
+                                         foreground: backgroundForeground, birth: 100)
+        }
+        XCTAssertEqual(rearmed.count, 1)
+        XCTAssertNotEqual(rearmed.first?.eventID, original)
+    }
+
     func testThresholdRequiresThirtyActualSecondsAndRecordsPeak() throws {
         var tracker = HighCPUTracker(policy: policy, intervalSeconds: 5)
         for end in [4, 8, 12, 16, 20, 24, 28] {

@@ -306,6 +306,12 @@ struct MenuMonitorView: View {
     @State private var report: CPUHistoryReport?
     @State private var historyReadError: String?
     @State private var eventActionError: String?
+    @State private var handledNavigation: UUID?
+
+    private struct HistoryScan: Equatable {
+        let sampledAt: Date
+        let navigation: UUID?
+    }
 
     init(model: MonitorModel, openSettings: @escaping () -> Void) {
         self.model = model
@@ -327,6 +333,12 @@ struct MenuMonitorView: View {
                          onResume: { model.setMonitoring(true) })
             }
         }
+        .onChange(of: model.eventNavigation, initial: true) { _, request in
+            guard let request, request.id != handledNavigation else { return }
+            tab = .events
+            selectedEvent = nil
+            eventActionError = nil
+        }
         .task(id: historyScan) {
             if showsHistory { await refreshHistory() }
         }
@@ -334,8 +346,9 @@ struct MenuMonitorView: View {
 
     private var showsHistory: Bool { model.panelVisible && tab == .events }
 
-    private var historyScan: Date? {
-        showsHistory ? (model.snapshot?.sampledAt ?? .distantPast) : nil
+    private var historyScan: HistoryScan? {
+        guard showsHistory else { return nil }
+        return HistoryScan(sampledAt: model.snapshot?.sampledAt ?? .distantPast, navigation: model.eventNavigation?.id)
     }
 
     private var status: PanelStatus {
@@ -383,14 +396,24 @@ struct MenuMonitorView: View {
     }
 
     private func refreshHistory() async {
+        let request = model.eventNavigation
         do {
             let updated = try await model.historyReport()
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, model.eventNavigation == request else { return }
             report = updated
             historyReadError = nil
+            if let request, request.id != handledNavigation {
+                handledNavigation = request.id
+                selectedEvent = BackgroundCPUAlert.destination(for: request.eventID, in: updated)
+                if selectedEvent == nil { eventActionError = "This event is no longer available." }
+            }
         } catch {
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, model.eventNavigation == request else { return }
             historyReadError = error.localizedDescription
+            if let request, request.id != handledNavigation {
+                handledNavigation = request.id
+                selectedEvent = nil
+            }
         }
     }
 }
@@ -1425,6 +1448,10 @@ struct MonitorSettingsView: View {
                 }
             }
 
+            if model.run.canRecordHistory {
+                BackgroundAlertSettings(notifications: model.notifications, model: model)
+            }
+
             Section("Power readings") {
                 Text("CPU power is estimated over each sample, on battery or plugged in. It covers CPU activity attributed to the process.")
                     .font(.callout)
@@ -1485,6 +1512,52 @@ struct MonitorSettingsView: View {
         document = JSONDocument(data: data)
         filename = name
         exporting = true
+    }
+}
+
+private struct BackgroundAlertSettings: View {
+    @ObservedObject var notifications: BackgroundNotifications
+    let model: MonitorModel
+    #if DEBUG
+    @State private var testError: String?
+    #endif
+
+    var body: some View {
+        Section("Background Alerts") {
+            Toggle("Enable background CPU alerts",
+                   isOn: Binding(get: { notifications.enabled }, set: { notifications.setEnabled($0) }))
+                .disabled(notifications.requesting)
+            LabeledContent("System notifications", value: status)
+            if notifications.permission == .denied || notifications.permission == .quiet {
+                Button("Open Notification Settings…", action: notifications.openSystemSettings)
+            }
+            #if DEBUG
+            if MonitorModel.debugAlertDirectory != nil {
+                Button("Send Test Notification") {
+                    Task {
+                        do {
+                            try await model.sendNotificationTest()
+                            testError = nil
+                        } catch {
+                            testError = error.localizedDescription
+                        }
+                    }
+                }
+                .disabled(!notifications.canEvaluate)
+                if let testError { Text(testError).foregroundStyle(.secondary) }
+            }
+            #endif
+        }
+    }
+
+    private var status: String {
+        switch notifications.permission {
+        case .unavailable: "Unavailable"
+        case .notRequested: "Not requested"
+        case .denied: "Disabled in System Settings"
+        case .allowed: "Allowed"
+        case .quiet: "Notification Center only"
+        }
     }
 }
 

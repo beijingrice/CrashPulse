@@ -233,6 +233,7 @@ final class CPUHistoryRecorder {
     private var forensics: ForensicsTracker
     private var battery: BatteryUsageTracker
     private var events: [HighCPUEvent]
+    private var lastAlertByApp: [String: Date]
     private var dirty = false
     private var batteryDirty = false
     private var needsImmediateWrite = false
@@ -244,17 +245,44 @@ final class CPUHistoryRecorder {
         self.store = store
         self.lock = lock
         events = file.events
+        lastAlertByApp = Dictionary(file.events.compactMap { $0.backgroundAlert.map { ($0.appKey, $0.at) } },
+                                    uniquingKeysWith: max)
         tracker = HighCPUTracker(policy: store.policy, intervalSeconds: intervalSeconds)
         forensics = ForensicsTracker(intervalSeconds: intervalSeconds)
         battery = BatteryUsageTracker(day: file.batteryDay, intervalSeconds: intervalSeconds, calendar: store.calendar)
         nextExpiration = events.last?.lastObservedAt.addingTimeInterval(Double(store.policy.retentionSeconds))
     }
 
-    func ingest(_ snapshot: Snapshot) throws {
-        guard let lock else { return }
-        let updates = forensics.ingest(snapshot, events: tracker.ingest(snapshot))
+    @discardableResult
+    func ingest(_ snapshot: Snapshot, background foreground: BackgroundForeground? = nil) throws -> [BackgroundCPUAlert] {
+        guard let lock else { return [] }
+        var claimedApps = Set<String>()
+        let now = snapshot.sampledAt
+        let alertScan = foreground.map { foreground in
+            HighCPUTracker.AlertScan(foreground: foreground) { id, appKey in
+                if let last = self.lastAlertByApp[appKey], now.timeIntervalSince(last) < BackgroundCPUAlert.cooldown {
+                    return false
+                }
+                guard !self.events.contains(where: { $0.id == id && $0.ignoredAt != nil }) else { return false }
+                return claimedApps.insert(appKey).inserted
+            }
+        }
+        let tracked = tracker.ingest(snapshot, alertScan: alertScan)
+        let alerts = tracker.alerts
+        if !alerts.isEmpty {
+            lastAlertByApp = lastAlertByApp.filter { now.timeIntervalSince($0.value) < BackgroundCPUAlert.cooldown }
+            for event in tracked {
+                if let mark = event.backgroundAlert, claimedApps.contains(mark.appKey),
+                   alerts.contains(where: { $0.eventID == event.id }) {
+                    lastAlertByApp[mark.appKey] = mark.at
+                }
+            }
+        }
+        let updates = forensics.ingest(snapshot, events: tracked)
         if battery.ingest(snapshot) { batteryDirty = true }
-        try commit(updates, now: snapshot.sampledAt, lock: lock)
+        try commit(updates, now: now, lock: lock, flush: !alerts.isEmpty)
+        // A write error prevents delivery. The claim stays with the event so recovery cannot replay it.
+        return alerts.filter { alert in events.contains { $0.id == alert.eventID && $0.backgroundAlert != nil } }
     }
 
     func report(now: Date = Date()) -> CPUHistoryReport {
@@ -262,6 +290,18 @@ final class CPUHistoryRecorder {
     }
 
     var activity: [ActivityPoint] { forensics.activity }
+
+    #if DEBUG
+    func createNotificationTestEvent(now: Date = Date()) throws -> UUID {
+        guard let lock else { throw CPUHistoryStore.StoreError.eventNotFound }
+        let event = HighCPUEvent(id: UUID(), identity: ProcessIdentity(pid: 1, startSeconds: 0, startMicroseconds: 0),
+                                 processStartTicks: 0, name: "Notification Test Event", path: nil,
+                                 startedAt: now.addingTimeInterval(-60), lastObservedAt: now,
+                                 observedDurationSeconds: 60, peakCPUPercent: 120, endReason: .belowThreshold)
+        try commit([event], now: now, lock: lock, flush: true)
+        return event.id
+    }
+    #endif
 
     func setIgnored(_ ignored: Bool, id: UUID, now: Date = Date()) throws {
         guard let lock, let index = events.firstIndex(where: { $0.id == id }) else {
@@ -292,6 +332,7 @@ final class CPUHistoryRecorder {
                     needsImmediateWrite = true
                 }
                 update.ignoredAt = event.ignoredAt
+                update.backgroundAlert = event.backgroundAlert ?? update.backgroundAlert
                 changed[event.id] = update
             }
             if changed.count > existingUpdates { needsImmediateWrite = true }
