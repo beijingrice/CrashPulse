@@ -111,8 +111,16 @@ for field, value, message in [
     ("sales.checkoutUrl", "https://creem.io/payment/prod_TEST123?redirect=https://evil.test", "unsupported query"),
     ("sales.checkoutUrl", "https://creem.io/payment/prod_TEST123#x", "fragment"),
     ("webServerLogs", {"recorded": "IP address"}, "webServerLogs"),
+    ("publisher.name", "   ", "publisher.name"),
+    ("publisher.name", " \t\n", "publisher.name"),
+    ("sales.price", "  ", "sales.price"),
+    ("sales.price", "\t", "sales.price"),
+    ("copyrightHolder", "  ", "copyrightHolder"),
 ]:
     scenario(f"live, invalid {field} = {value!r}", complete((field, value)), False, False, message=message)
+scenario("review: whitespace-only price", setter(("sales.price", "   ")), False, False, message="sales.price")
+scenario("pre-sale: whitespace-only publisher.name", setter(("publisher", {"name": "  ", "confirmed": True})), False, False,
+         message="publisher.name")
 scenario("complete live config, voluntary refund window", complete(), True, True, [
     ("index.html", 'href="https://creem.io/payment/prod_TEST123">Buy CrashPulse', True),
     ("index.html", "merchant of record", True),

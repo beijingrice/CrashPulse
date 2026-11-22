@@ -10,7 +10,7 @@ The site is separate from the Alipay experiment in `../shop.py`. It does not lin
 | `site.json` | Launch settings: domain, release, publisher, copyright holder, support email, refund policy, web server logs, price, Creem checkout link and Creem document links |
 | `configure.py` | Validates `site.json`, writes it into the marked blocks of the pages, and regenerates `robots.txt` and `sitemap.xml`. Refuses to write anything if a Buy link is configured without everything live checkout needs. |
 | `check.py` | Pre-deploy check. Fails on malformed settings, an incomplete live checkout, stale pages, missing files, non-web files, placeholders, or outside resources. Lists what Creem approval still needs. |
-| `test_config.py` | Runs configure and check against 26 site.json scenarios (pre-sale, price-only review, each missing or invalid live field, complete live configs) in a temporary copy |
+| `test_config.py` | Runs configure and check against 33 site.json scenarios (pre-sale, price-only review, each missing, invalid or whitespace-only live field, complete live configs) in a temporary copy |
 | `og-image.svg`, `make-og.zsh` | Share image source and the script that renders `public/assets/og.png` |
 | `../../Scripts/render-site-shots.zsh` | Regenerates the example screenshots in `public/assets/shots` |
 
@@ -36,9 +36,9 @@ Edit `site.json`, then run `python3 configure.py` and `python3 check.py` from th
 
 Live checkout fails closed. `configure.py` refuses to write anything, and `check.py` fails, unless all of these are set and valid:
 
-- `publisher.name` with `publisher.confirmed: true`
+- `publisher.name` as a nonblank string, with `publisher.confirmed: true`
 - `supportEmail`
-- `sales.price`
+- `sales.price` as a nonblank string
 - `refundPolicy.mode`, either `voluntary-window` with `voluntaryWindowDays`, or `statutory-only`
 - `creem.buyerTermsUrl` exactly `https://www.creem.io/buyer-terms`, and `creem.privacyUrl` exactly `https://www.creem.io/privacy`
 - `sales.checkoutUrl` as a Creem product payment link: `https://creem.io/payment/prod_…`, optionally with `discount_code`, `theme` or `metadata[…]` parameters. It is the only checkout format Creem's docs confirm. Other hosts, `www.creem.io`, API checkout session URLs and test-mode links are rejected until verified.

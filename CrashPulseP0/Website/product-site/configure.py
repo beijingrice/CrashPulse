@@ -51,6 +51,11 @@ REFUND_MODES = ("voluntary-window", "statutory-only")
 e = html.escape
 
 
+def nonblank(value):
+    """True for a string with visible text, so whitespace never counts as a confirmed value."""
+    return isinstance(value, str) and bool(value.strip())
+
+
 def creem_checkout_problem(url):
     """Why url is not an accepted Creem checkout link, or None if it is."""
     parsed = urlparse(url)
@@ -79,6 +84,12 @@ def shape_problems(config):
     publisher = config.get("publisher") or {}
     if not isinstance(publisher.get("confirmed", False), bool):
         problems.append("publisher.confirmed must be true or false")
+    # A value that is present must have visible text: these strings are shown on the pages.
+    for label, value in [("publisher.name", publisher.get("name")),
+                         ("copyrightHolder", config.get("copyrightHolder")),
+                         ("sales.price", (config.get("sales") or {}).get("price"))]:
+        if value is not None and not nonblank(value):
+            problems.append(f"{label} must be null or a nonblank string")
     refund = config.get("refundPolicy") or {}
     mode, days = refund.get("mode"), refund.get("voluntaryWindowDays")
     if mode is not None and mode not in REFUND_MODES:
@@ -97,13 +108,13 @@ def live_problems(config):
     """What stops a Buy link from going live. Empty means checkout may be published."""
     problems = []
     publisher = config.get("publisher") or {}
-    if not (publisher.get("name") and publisher.get("confirmed") is True):
+    if not (nonblank(publisher.get("name")) and publisher.get("confirmed") is True):
         problems.append("publisher.name is not set and confirmed (publisher.confirmed: true)")
     if not (isinstance(config.get("supportEmail"), str) and EMAIL.fullmatch(config["supportEmail"])):
         problems.append("supportEmail is missing or invalid")
     sales = config.get("sales") or {}
-    if not sales.get("price"):
-        problems.append("sales.price is missing")
+    if not nonblank(sales.get("price")):
+        problems.append("sales.price is missing or blank")
     if (config.get("refundPolicy") or {}).get("mode") not in REFUND_MODES:
         problems.append("refundPolicy.mode is not chosen (voluntary-window or statutory-only)")
     creem = config.get("creem") or {}
@@ -122,7 +133,7 @@ def live_problems(config):
 def approval_gaps(config):
     """Values Creem's approval checklist needs, reported but not enforced before going live."""
     gaps = [p for p in live_problems(config) if not p.startswith("sales.checkoutUrl")]
-    if not config.get("copyrightHolder"):
+    if not nonblank(config.get("copyrightHolder")):
         gaps.append("copyrightHolder is not set (footers say © CrashPulse until then)")
     return gaps
 
