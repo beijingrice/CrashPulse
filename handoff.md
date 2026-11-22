@@ -68,31 +68,39 @@ The first-launch welcome is implemented (see Recent work 9) but has only been ch
 - The daily build and the notarized beta use `org.crashpulse.p0.off`. The daily journal is `~/Library/Application Support/CrashPulse/cpu-history.json`.
 - Claude Design mirror of the panel (Events, Event detail, Live, with dark and severity switches): https://claude.ai/artifact/1VaNZyjmpBgS7zV1trhZqv. It is a hand-built mockup, private to the owner, not synced with code, and does not include the welcome.
 
+## Build cache cleanup (2026-11-22)
+
+Removed 77 regenerable Xcode and Swift cache directories and build intermediates from old builds and experiments. `CrashPulseP0/.build` went from 6,612,752 KiB (6.31 GiB) to 1,179,400 KiB (1.12 GiB), reclaiming **5.18 GiB**.
+
+- Kept `CrashPulseP0/.build/xcode` in full, including the day-to-day `Build/Products/Release/CrashPulseOff.app`. The same process was running after cleanup.
+- Kept the entire `CrashPulseP0/.build/notarization-20261122/` directory, including the final ZIP, submission archive, and Apple's `submission.json` and `result.json`. The copy at `~/Desktop/CrashPulse-0.1.0-beta.zip` was verified byte-for-byte against the final ZIP in the project.
+- Kept performance measurements, logs, and stack samples in `.build/live-visibility-audit/`, `.build/self-spike-investigation/`, and `.build/status-power-audit/` under `CrashPulseP0/`. Historical benchmark results and `.xcresult` bundles were also retained.
+
 ## Build and verify from this checkout
 
-Run these on the Mac. The checked toolchain is Xcode 27.2, and the app targets macOS 14 and later. Use a dedicated derived-data directory for onboarding so the existing builds stay available.
+Run these on the Mac. The checked toolchain is Xcode 27.2, and the app targets macOS 14 and later. **Reuse `CrashPulseP0/.build/xcode` for routine Debug, Release, test, and UI preview builds.** The release packaging script uses a separate output directory for each notarized distribution.
 
 ```sh
 cd /Users/rice/Documents/ChatGPT/crashPulse/CrashPulseP0
 
 xcodebuild -project CrashPulseP0.xcodeproj -scheme CrashPulse-Sandbox-Off \
   -configuration Debug -destination 'platform=macOS,arch=arm64' \
-  -derivedDataPath .build/onboarding-xcode test
+  -derivedDataPath .build/xcode test
 
 # Build the app explicitly. The test target builds the model and XCTest bundle.
 xcodebuild -project CrashPulseP0.xcodeproj -scheme CrashPulse-Sandbox-Off \
   -configuration Debug -destination 'platform=macOS,arch=arm64' \
-  -derivedDataPath .build/onboarding-xcode build
-.build/onboarding-xcode/Build/Products/Debug/CrashPulseOff.app/Contents/MacOS/CrashPulseOff \
+  -derivedDataPath .build/xcode build
+.build/xcode/Build/Products/Debug/CrashPulseOff.app/Contents/MacOS/CrashPulseOff \
   --render-ui .build/ui-onboarding
 
 xcodebuild -project CrashPulseP0.xcodeproj -scheme CrashPulse-Sandbox-Off \
   -configuration Release -destination 'platform=macOS,arch=arm64' \
-  -derivedDataPath .build/onboarding-xcode build
-/usr/bin/codesign --verify --strict .build/onboarding-xcode/Build/Products/Release/CrashPulseOff.app
+  -derivedDataPath .build/xcode build
+/usr/bin/codesign --verify --strict .build/xcode/Build/Products/Release/CrashPulseOff.app
 ```
 
-`--render-ui` uses built-in samples by default. To render existing records, pass a scratch copy of the history directory as its second argument. To test the actual Release window, use `open .build/onboarding-xcode/Build/Products/Release/CrashPulseOff.app` in the test login. If replacing an active instance, quit it normally first so the journal flushes. For a distribution ZIP, follow [Publish a new direct-download build](#publish-a-new-direct-download-build).
+`--render-ui` uses built-in samples by default. To render existing records, pass a scratch copy of the history directory as its second argument. To test the actual Release window, use `open .build/xcode/Build/Products/Release/CrashPulseOff.app` in the test login. If replacing an active instance, quit it normally first so the journal flushes. For a distribution ZIP, follow [Publish a new direct-download build](#publish-a-new-direct-download-build).
 
 ## Source map
 
