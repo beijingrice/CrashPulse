@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CrashPulse: find out what kept your Mac busy</title>
+  <meta name="description" content="CrashPulse is a menu bar app for macOS 14 or later. It records sustained CPU activity, names the app most likely responsible, and shows live CPU and CPU power per app.">
+  <meta name="color-scheme" content="light dark">
+  <meta property="og:title" content="CrashPulse">
+  <meta property="og:description" content="Find out what kept your Mac busy. A menu bar app that records sustained CPU activity and names the app most likely responsible.">
+  <meta property="og:type" content="website">
+  <link rel="icon" type="image/png" sizes="64x64" href="assets/favicon-64.png">
+  <link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="wrap">
+      <a class="brand" href="./" aria-label="CrashPulse home">
+        <img src="assets/icon-256.png" alt="" width="30" height="30">
+        CrashPulse
+      </a>
+      <nav class="site-nav" aria-label="Sections">
+        <a href="#features">Features</a>
+        <a href="#measuring">How it measures</a>
+        <a href="#requirements">Requirements</a>
+        <a href="#install">Install</a>
+        <a class="keep" href="#availability">Availability</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <div class="hero">
+      <div class="wrap">
+        <h1>Find out what kept your Mac busy.</h1>
+        <p class="lede">When the fans spin up or the battery drains faster than it should, CrashPulse has already noted which app did it, for how long and how hard. It lives in the menu bar and keeps watch while you work.</p>
+        <div class="actions">
+          <a class="button" href="#availability">Pricing and availability</a>
+          <span class="fine">For macOS 14 or later, on Apple silicon and Intel Macs.</span>
+        </div>
+      </div>
+
+      <figure class="recorder" aria-label="Example CPU trace: a calm stretch, a four-minute event in a tinted span, then calm again.">
+        <svg viewBox="0 0 1200 240" preserveAspectRatio="none" aria-hidden="true">
+          <defs>
+            <linearGradient id="trace" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="1200" y2="0">
+              <stop offset="0" class="stop-idle"/>
+              <stop offset="0.535" class="stop-idle"/>
+              <stop offset="0.56" stop-color="#ff8a00"/>
+              <stop offset="0.6" stop-color="#ff3b30"/>
+              <stop offset="0.75" stop-color="#ff3b30"/>
+              <stop offset="0.775" class="stop-idle"/>
+              <stop offset="1" class="stop-idle"/>
+            </linearGradient>
+          </defs>
+          <g class="grid">
+            <line x1="0" y1="26" x2="1200" y2="26"/>
+            <line x1="0" y1="120" x2="1200" y2="120"/>
+            <line x1="0" y1="214" x2="1200" y2="214"/>
+          </g>
+          <rect class="span" x="650" y="14" width="262" height="200"/>
+          <g class="ink">
+            <path class="total" d="M0 197.0C2.0 196.4 8.0 194.6 12 193.5C16.0 192.3 20.0 190.7 24 190.1C28.0 189.4 32.0 189.6 36 189.4C40.0 189.2 44.0 188.8 48 189.0C52.0 189.1 56.0 191.0 60 190.6C64.0 190.1 68.0 186.1 72 186.4C76.0 186.7 80.0 191.8 84 192.2C88.0 192.6 92.0 188.5 96 188.8C100.0 189.2 104.0 192.8 108 194.1C112.0 195.4 116.0 196.1 120 196.7C124.0 197.3 128.0 196.8 132 197.8C136.0 198.7 140.0 202.4 144 202.6C148.0 202.8 152.0 199.4 156 199.0C160.0 198.7 164.0 200.5 168 200.5C172.0 200.5 176.0 199.1 180 199.0C184.0 198.8 188.0 199.6 192 199.6C196.0 199.6 200.0 199.9 204 199.0C208.0 198.1 212.0 195.1 216 194.2C220.0 193.3 224.0 193.6 228 193.5C232.0 193.5 236.0 194.2 240 193.7C244.0 193.1 248.0 190.2 252 190.1C256.0 190.1 260.0 192.9 264 193.1C268.0 193.3 272.0 191.1 276 191.4C280.0 191.6 284.0 193.9 288 194.6C292.0 195.3 296.0 195.5 300 195.6C304.0 195.8 308.0 195.0 312 195.5C316.0 196.0 320.0 198.0 324 198.4C328.0 198.9 332.0 198.6 336 198.0C340.0 197.5 344.0 195.8 348 195.3C352.0 194.8 356.0 195.5 360 195.1C364.0 194.7 368.0 193.4 372 192.9C376.0 192.5 380.0 193.3 384 192.4C388.0 191.5 392.0 188.0 396 187.4C400.0 186.8 404.0 188.6 408 188.9C412.0 189.3 416.0 190.1 420 189.6C424.0 189.1 428.0 185.9 432 185.9C436.0 185.9 440.0 188.8 444 189.6C448.0 190.4 452.0 189.9 456 190.8C460.0 191.7 464.0 193.9 468 195.3C472.0 196.6 476.0 198.3 480 198.8C484.0 199.4 488.0 197.7 492 198.4C496.0 199.1 500.0 202.5 504 202.8C508.0 203.2 512.0 200.1 516 200.3C520.0 200.5 524.0 204.1 528 204.1C532.0 204.1 536.0 201.2 540 200.2C544.0 199.2 548.0 198.1 552 198.2C556.0 198.2 560.0 201.0 564 200.6C568.0 200.1 572.0 196.5 576 195.5C580.0 194.4 584.0 194.4 588 194.2C592.0 194.0 596.0 194.7 600 194.1C604.0 193.5 608.0 191.3 612 190.4C616.0 189.5 620.0 188.8 624 188.6C628.0 188.4 632.0 189.5 636 189.3C640.0 189.1 644.0 192.0 648 187.3C652.0 182.7 656.0 173.7 660 161.3C664.0 148.8 668.0 132.5 672 112.7C676.0 92.9 680.0 52.6 684 42.7C688.0 32.8 692.0 50.3 696 53.4C700.0 56.5 704.0 58.2 708 61.3C712.0 64.3 716.0 68.9 720 71.8C724.0 74.7 728.0 77.8 732 78.6C736.0 79.4 740.0 78.9 744 76.5C748.0 74.2 752.0 67.0 756 64.7C760.0 62.3 764.0 64.6 768 62.5C772.0 60.5 776.0 55.2 780 52.3C784.0 49.4 788.0 46.1 792 45.2C796.0 44.2 800.0 46.7 804 46.6C808.0 46.5 812.0 44.5 816 44.7C820.0 45.0 824.0 45.5 828 48.2C832.0 50.8 836.0 59.1 840 60.9C844.0 62.7 848.0 57.6 852 58.9C856.0 60.2 860.0 68.2 864 68.7C868.0 69.2 872.0 55.3 876 62.1C880.0 68.9 884.0 92.8 888 109.6C892.0 126.4 896.0 148.8 900 163.0C904.0 177.2 908.0 188.9 912 194.7C916.0 200.5 920.0 197.4 924 197.8C928.0 198.2 932.0 196.9 936 197.2C940.0 197.5 944.0 199.7 948 199.4C952.0 199.1 956.0 197.4 960 195.6C964.0 193.9 968.0 190.1 972 188.8C976.0 187.6 980.0 188.9 984 188.2C988.0 187.6 992.0 184.6 996 184.9C1000.0 185.3 1004.0 189.3 1008 190.4C1012.0 191.4 1016.0 191.3 1020 191.2C1024.0 191.2 1028.0 190.7 1032 190.2C1036.0 189.7 1040.0 187.7 1044 188.2C1048.0 188.6 1052.0 191.5 1056 192.9C1060.0 194.4 1064.0 196.6 1068 197.1C1072.0 197.6 1076.0 195.7 1080 195.9C1084.0 196.1 1088.0 197.0 1092 198.3C1096.0 199.6 1100.0 203.1 1104 203.8C1108.0 204.4 1112.0 203.2 1116 202.4C1120.0 201.5 1124.0 198.8 1128 198.8C1132.0 198.7 1136.0 202.3 1140 201.9C1144.0 201.4 1148.0 196.5 1152 196.2C1156.0 195.8 1160.0 200.1 1164 199.6C1168.0 199.0 1172.0 194.3 1176 193.0C1180.0 191.7 1184.0 193.1 1188 191.8C1192.0 190.6 1198.0 186.5 1200 185.5"/>
+          <path class="app" d="M0 209.0C2.0 208.7 8.0 207.4 12 207.0C16.0 206.6 20.0 206.6 24 206.7C28.0 206.8 32.0 207.7 36 207.8C40.0 208.0 44.0 207.6 48 207.4C52.0 207.3 56.0 207.3 60 207.0C64.0 206.7 68.0 205.6 72 205.5C76.0 205.5 80.0 206.8 84 206.7C88.0 206.6 92.0 205.3 96 205.1C100.0 204.9 104.0 205.8 108 205.7C112.0 205.7 116.0 204.8 120 204.8C124.0 204.9 128.0 205.2 132 206.0C136.0 206.8 140.0 208.8 144 209.5C148.0 210.1 152.0 209.4 156 209.6C160.0 209.9 164.0 210.8 168 210.9C172.0 210.9 176.0 209.9 180 209.8C184.0 209.8 188.0 210.2 192 210.7C196.0 211.2 200.0 212.7 204 212.7C208.0 212.8 212.0 210.9 216 210.8C220.0 210.7 224.0 212.1 228 212.2C232.0 212.3 236.0 211.8 240 211.4C244.0 211.0 248.0 209.8 252 209.7C256.0 209.7 260.0 211.3 264 211.3C268.0 211.2 272.0 210.1 276 209.5C280.0 209.0 284.0 208.5 288 208.0C292.0 207.4 296.0 206.3 300 206.2C304.0 206.2 308.0 207.3 312 207.6C316.0 207.9 320.0 207.9 324 207.9C328.0 207.9 332.0 208.3 336 207.7C340.0 207.2 344.0 205.2 348 204.5C352.0 203.9 356.0 203.9 360 203.9C364.0 203.9 368.0 204.3 372 204.5C376.0 204.7 380.0 205.1 384 205.1C388.0 205.1 392.0 204.2 396 204.4C400.0 204.7 404.0 205.7 408 206.3C412.0 207.0 416.0 208.4 420 208.5C424.0 208.7 428.0 207.3 432 207.1C436.0 206.9 440.0 206.8 444 207.2C448.0 207.6 452.0 208.9 456 209.6C460.0 210.4 464.0 211.4 468 211.7C472.0 212.1 476.0 211.7 480 211.8C484.0 212.0 488.0 212.6 492 212.7C496.0 212.9 500.0 212.9 504 212.7C508.0 212.6 512.0 211.9 516 211.9C520.0 211.9 524.0 212.9 528 212.7C532.0 212.6 536.0 211.5 540 210.9C544.0 210.4 548.0 209.5 552 209.5C556.0 209.4 560.0 210.8 564 210.9C568.0 210.9 572.0 210.5 576 209.9C580.0 209.2 584.0 207.0 588 206.8C592.0 206.7 596.0 208.8 600 209.0C604.0 209.2 608.0 208.5 612 208.0C616.0 207.5 620.0 206.0 624 206.0C628.0 205.9 632.0 207.7 636 207.6C640.0 207.6 644.0 210.8 648 205.9C652.0 201.0 656.0 191.7 660 178.4C664.0 165.0 668.0 145.9 672 125.8C676.0 105.7 680.0 68.2 684 58.0C688.0 47.8 692.0 62.6 696 64.5C700.0 66.3 704.0 66.7 708 69.1C712.0 71.5 716.0 76.5 720 79.1C724.0 81.8 728.0 83.9 732 84.9C736.0 85.9 740.0 86.6 744 85.1C748.0 83.5 752.0 77.5 756 75.6C760.0 73.7 764.0 75.1 768 73.8C772.0 72.5 776.0 70.1 780 68.0C784.0 65.8 788.0 61.7 792 60.9C796.0 60.1 800.0 63.1 804 63.2C808.0 63.3 812.0 60.8 816 61.5C820.0 62.1 824.0 64.5 828 67.1C832.0 69.7 836.0 75.1 840 76.9C844.0 78.8 848.0 76.9 852 78.1C856.0 79.2 860.0 84.1 864 83.8C868.0 83.5 872.0 70.0 876 76.1C880.0 82.2 884.0 103.7 888 120.2C892.0 136.7 896.0 160.9 900 175.1C904.0 189.3 908.0 200.5 912 205.6C916.0 210.6 920.0 205.2 924 205.2C928.0 205.2 932.0 205.2 936 205.6C940.0 205.9 944.0 207.0 948 207.1C952.0 207.2 956.0 206.5 960 206.1C964.0 205.6 968.0 204.6 972 204.6C976.0 204.6 980.0 205.9 984 205.8C988.0 205.8 992.0 204.0 996 204.3C1000.0 204.5 1004.0 206.5 1008 207.2C1012.0 207.9 1016.0 208.1 1020 208.5C1024.0 208.8 1028.0 209.5 1032 209.4C1036.0 209.2 1040.0 207.5 1044 207.5C1048.0 207.6 1052.0 209.6 1056 209.9C1060.0 210.2 1064.0 209.2 1068 209.3C1072.0 209.4 1076.0 210.2 1080 210.4C1084.0 210.5 1088.0 210.1 1092 210.3C1096.0 210.5 1100.0 211.6 1104 211.6C1108.0 211.6 1112.0 210.6 1116 210.4C1120.0 210.1 1124.0 209.9 1128 210.1C1132.0 210.2 1136.0 211.4 1140 211.2C1144.0 210.9 1148.0 208.6 1152 208.5C1156.0 208.4 1160.0 210.5 1164 210.7C1168.0 211.0 1172.0 210.7 1176 210.0C1180.0 209.4 1184.0 207.4 1188 206.8C1192.0 206.1 1198.0 206.1 1200 205.9"/>
+          </g>
+        </svg>
+        <figcaption class="note">
+          <span class="note-label">Busy in the background</span>
+          <p>Indexer kept the CPU at up to 254% for 4m&nbsp;10s while you were using other apps.</p>
+          <small>Example event</small>
+        </figcaption>
+      </figure>
+    </div>
+
+    <section id="features" aria-labelledby="features-title">
+      <div class="wrap">
+        <div class="section-head">
+          <h2 id="features-title">What CrashPulse shows you</h2>
+          <p>Screenshots show CrashPulse with example data.</p>
+        </div>
+
+        <article class="feature">
+          <div class="text">
+            <h3>Every long CPU spike, kept</h3>
+            <div class="prose">
+              <p>CrashPulse checks your Mac every few seconds. When an app keeps the processor busy for 30 seconds or more, it records an event with when it started, how long it lasted and how high it went.</p>
+              <p>Events are grouped by day, so you can look back at the fan noise from this morning or the battery drain from yesterday. An app that keeps doing it in the background on separate days gets called out at the top.</p>
+            </div>
+          </div>
+          <figure class="panel">
+            <picture>
+              <source srcset="assets/shots/events-dark.webp" media="(prefers-color-scheme: dark)">
+              <img src="assets/shots/events-light.webp" width="360" height="493" loading="lazy"
+                   alt="The CrashPulse menu bar panel listing CPU events grouped by day, each with a small CPU trace and its peak.">
+            </picture>
+            <figcaption>The event list, with example data.</figcaption>
+          </figure>
+        </article>
+
+        <article class="feature">
+          <div class="text">
+            <h3>A plain answer about who did it</h3>
+            <div class="prose">
+              <p>Open an event to see the app most likely responsible and how serious it was. CrashPulse tells you whether it happened while you were using that app or while it worked in the background.</p>
+              <p>One CPU trace runs from before the event to after it, next to the duration, the peak and an estimate of the CPU energy it used. Below that is a short suggestion for what to do, and the processes that took part.</p>
+            </div>
+          </div>
+          <figure class="panel">
+            <picture>
+              <source srcset="assets/shots/detail-dark.webp" media="(prefers-color-scheme: dark)">
+              <img src="assets/shots/detail-light.webp" width="360" height="714" loading="lazy"
+                   alt="An event detail: the app name, a sentence saying it kept the CPU at up to 170% while other apps were in use, a CPU trace, three figures and the processes involved.">
+            </picture>
+            <figcaption>An event that is still happening, with example data.</figcaption>
+          </figure>
+        </article>
+
+        <article class="feature">
+          <div class="text">
+            <h3>What is using the processor right now</h3>
+            <div class="prose">
+              <p>Live ranks apps by CPU use or by CPU power, with a trend for the last three minutes. Helper processes count toward the app they belong to, so a browser and its dozen helpers appear as one row.</p>
+              <p>Expand an app to see its processes, or open the full list to search by name or process ID.</p>
+            </div>
+          </div>
+          <figure class="panel">
+            <picture>
+              <source srcset="assets/shots/live-dark.webp" media="(prefers-color-scheme: dark)">
+              <img src="assets/shots/live-light.webp" width="360" height="504" loading="lazy"
+                   alt="The Live view: total CPU over the last three minutes and the top apps ranked by CPU power, each with a share bar, CPU percentage and power in watts.">
+            </picture>
+            <figcaption>Live, with example data.</figcaption>
+          </figure>
+        </article>
+      </div>
+    </section>
+
+    <section id="measuring" aria-labelledby="measuring-title">
+      <div class="wrap">
+        <h2 id="measuring-title">How it measures</h2>
+        <dl class="facts">
+          <div>
+            <dt>Sustained, not momentary</dt>
+            <dd>Short bursts are normal. An event needs 30 seconds of continuous load from one app or process, so opening a big file does not count.</dd>
+          </div>
+          <div>
+            <dt>Apps, not just processes</dt>
+            <dd>Background helpers are added up under the app that owns them. Load spread across several helpers still adds up to an event.</dd>
+          </div>
+          <div>
+            <dt>Fair to busy Macs</dt>
+            <dd>The trigger adapts to how busy your Mac usually is, so a machine that always runs a heavy workload is not flagged all day.</dd>
+          </div>
+          <div>
+            <dt>CPU energy on Apple silicon</dt>
+            <dd>Where macOS reports it, CrashPulse estimates the CPU energy an app used. Graphics, the display and charging are not part of that figure.</dd>
+          </div>
+          <div>
+            <dt>Stays on your Mac</dt>
+            <dd>History is kept on your Mac for seven days. There is no account, nothing is uploaded, and no special permissions are needed.</dd>
+          </div>
+          <div>
+            <dt>Never interferes</dt>
+            <dd>CrashPulse does not quit, slow down or change any app. It tells you what happened, and you decide what to do.</dd>
+          </div>
+        </dl>
+        <p class="caveat">Some processes that belong to macOS itself cannot be read by ordinary apps, so their spikes may not appear. CrashPulse names the most likely contributor based on what it can measure.</p>
+      </div>
+    </section>
+
+    <section id="requirements" aria-labelledby="requirements-title">
+      <div class="wrap">
+        <h2 id="requirements-title">System requirements</h2>
+        <dl class="specs">
+          <div><dt>macOS</dt><dd>macOS 14 Sonoma or later</dd></div>
+          <div><dt>Mac</dt><dd>Apple silicon or Intel. One universal app runs natively on both.</dd></div>
+          <div><dt>CPU energy estimates</dt><dd>Apple silicon. Intel Macs show CPU use without energy.</dd></div>
+          <div><dt>Permissions</dt><dd>None. CrashPulse does not ask for Accessibility, Full Disk Access or screen recording.</dd></div>
+          <div><dt>Security</dt><dd>Signed with an Apple Developer ID and notarized by Apple.</dd></div>
+          <div><dt>Download</dt><dd>A disk image of about 2 MB</dd></div>
+          <div><dt>Current version</dt><dd>0.1.0</dd></div>
+        </dl>
+      </div>
+    </section>
+
+    <section id="install" aria-labelledby="install-title">
+      <div class="wrap">
+        <h2 id="install-title">Install</h2>
+        <ol class="steps">
+          <li><div><p>Open the CrashPulse disk image you downloaded.</p></div></li>
+          <li><div><p>Drag CrashPulse onto the Applications folder in the window that opens.</p></div></li>
+          <li><div><p>Open CrashPulse from Applications.</p><p>A short welcome explains what it watches. CrashPulse has no Dock icon.</p></div></li>
+          <li><div><p>Click the waveform icon in the menu bar to see events and live use.</p><p>Monitoring starts on its own. The first readings appear after a few seconds.</p></div></li>
+        </ol>
+        <p class="after-steps">To remove CrashPulse, choose Quit in its panel and move the app to the Trash. Its history is in <code>~/Library/Application Support/CrashPulse</code> and can be deleted too.</p>
+      </div>
+    </section>
+
+    <section id="availability" class="availability" aria-labelledby="availability-title">
+      <div class="wrap">
+        <h2 id="availability-title">Pricing and availability</h2>
+        <div class="prose">
+          <p>CrashPulse will be sold as a direct download for <span class="pending">price to be confirmed</span>. Checkout and delivery of the download will be handled by <span class="pending">reseller to be confirmed</span>.</p>
+          <p>Checkout is not open yet. For questions, write to <span class="pending">support email to be confirmed</span>.</p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap">
+      <span>&copy; 2026 <span class="pending">seller name to be confirmed</span></span>
+      <nav aria-label="Legal">
+        <a href="privacy.html">Privacy</a>
+        <a href="#availability">Contact</a>
+      </nav>
+      <p class="trademarks">Mac, macOS and Apple silicon are trademarks of Apple Inc. Other app names in example screenshots belong to their owners.</p>
+    </div>
+  </footer>
+</body>
+</html>
