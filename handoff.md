@@ -2,6 +2,55 @@
 
 Last updated 2026-11-22. Read this file before editing and follow [AGENTS.md](AGENTS.md) for the project rules and UI design guide.
 
+## Current notarized beta
+
+- **Final ZIP** — [CrashPulse-0.1.0-beta.zip](CrashPulseP0/.build/notarization-20261122/CrashPulse-0.1.0-beta.zip). The ZIP is local to this Mac and lives under the git-ignored `.build` directory.
+- **Build** — `0.1.0` (build `1`), source `75b67ed`, `CrashPulse-Sandbox-Off` Release, bundle ID `org.crashpulse.p0.off`. The executable contains `arm64` and `x86_64` and targets macOS 14 or later.
+- **Apple notarization** — `Accepted` on 2026-11-22 for submission `5927dfd9-081b-4898-b1d9-3e5a66c11d74`. The Apple response is in `.build/notarization-20261122/result.json` under `CrashPulseP0/`.
+- **Verified on the build Mac** — Developer ID Application signature with Hardened Runtime and a secure timestamp. After stapling the ticket to `CrashPulse.app`, the final ZIP was extracted into a separate directory. The extracted app passed strict signature verification for both architectures, `stapler validate`, and `syspolicy_check distribution`.
+- **SHA-256** — `ad6376ed2bcecdb97f219b302858255f607e19f23a4bdec74edad9e39a62a47b`.
+
+The remaining distribution check is a browser download on another Mac with Gatekeeper enabled. Extract the ZIP in Finder, move `CrashPulse.app` to Applications, and open it from Finder in a fresh test account. Check the welcome flow below, open Live and Events, and confirm events persist after relaunch. The ZIP has been verified locally and is still stored on the build Mac.
+
+## Publish a new direct-download build
+
+1. For a new release, update `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION` in `CrashPulseP0.xcodeproj` as appropriate. Record the source commit and keep the bundle ID `org.crashpulse.p0.off` for upgrades.
+2. Run `security find-identity -v -p codesigning` in Terminal on the signing Mac. The identity used for this release was `Developer ID Application: Ning Gan (QHSG8V3GKU)`. The signing Mac needs the certificate and its matching private key in the Keychain.
+3. Reuse the `crashpulse-notary` Keychain profile. To check it, run `xcrun notarytool history --keychain-profile crashpulse-notary`. If the profile is missing or its credentials expired, generate an app-specific password in the Apple Account and enter it at the secure prompt below. Substitute the team's Apple Account email. Keep the password in the local Keychain.
+
+   ```sh
+   xcrun notarytool store-credentials crashpulse-notary \
+     --apple-id 'YOUR_APPLE_ACCOUNT_EMAIL' --team-id QHSG8V3GKU
+   ```
+
+4. From `CrashPulseP0/`, run the existing release script with a fresh output directory.
+
+   ```sh
+   release_dir=".build/beta-$(date +%Y%m%d-%H%M%S)"
+   Scripts/prepare-beta.zsh "$release_dir" \
+     'Developer ID Application: Ning Gan (QHSG8V3GKU)' crashpulse-notary
+   ```
+
+   The script builds the non-sandboxed Release with Hardened Runtime, signs with a secure timestamp, and stages it as `CrashPulse.app`. It submits `notary-submission.zip` to Apple and waits for `Accepted` in `notarization.json`. It then staples the ticket to the app, validates it, and creates `CrashPulse-<version>-beta.zip` from the stapled app. Share the `-beta.zip` produced by that last step.
+
+5. Verify the final ZIP by extracting a fresh copy before the browser-download smoke test.
+
+   ```sh
+   version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
+     "$release_dir/CrashPulse.app/Contents/Info.plist")
+   zip="$release_dir/CrashPulse-$version-beta.zip"
+   verification_dir=$(mktemp -d "${TMPDIR:-/tmp}/crashpulse-release.XXXXXXXX")
+   ditto -x -k "$zip" "$verification_dir" &&
+     codesign --verify --strict --all-architectures "$verification_dir/CrashPulse.app" &&
+     xcrun stapler validate "$verification_dir/CrashPulse.app" &&
+     syspolicy_check distribution "$verification_dir/CrashPulse.app" &&
+     shasum -a 256 "$zip"
+   ```
+
+   Record the final ZIP path, checksum, Apple submission ID and smoke-test result for the release.
+
+If the script stops after submission, use the submission ID from `notarization.json` or find it with `xcrun notarytool history --keychain-profile crashpulse-notary`. Check its status with `xcrun notarytool info SUBMISSION_ID --keychain-profile crashpulse-notary`. For an `Invalid` result, get the issue details with `xcrun notarytool log SUBMISSION_ID --keychain-profile crashpulse-notary`. If Apple already accepted the staged app, resume with `xcrun stapler staple` and repack that same app using `ditto -c -k --sequesterRsrc --keepParent`. [Apple's notarization workflow](https://developer.apple.com/documentation/security/customizing-the-notarization-workflow)
+
 ## Next task: finish verifying the welcome window
 
 The first-launch welcome is implemented (see Recent work 9) but has only been checked through renders and window-level launch probes. Before calling it done:
@@ -15,8 +64,8 @@ The first-launch welcome is implemented (see Recent work 9) but has only been ch
 
 - `master` contains the welcome window on top of `9bcc6d7`.
 - The owner's day-to-day app at `CrashPulseP0/.build/xcode/Build/Products/Release/CrashPulseOff.app` was rebuilt on Nov 22 from the welcome commit, so it includes the attribution fix and the welcome. It is running. It skipped the welcome because the owner already has history, and wrote `welcomeCompleted = 1`.
-- Latest packaged beta: `CrashPulseP0/.build/beta-candidate/CrashPulse.app` and `CrashPulse-0.1.0-local-test.zip` (Hardened Runtime, ad hoc signature, Nov 21). It predates the welcome. Rebuild with `Scripts/prepare-beta.zsh` before sharing.
-- Both artifacts use `org.crashpulse.p0.off`. The daily journal is `~/Library/Application Support/CrashPulse/cpu-history.json`.
+- The Nov 21 ZIP in `CrashPulseP0/.build/beta-candidate/` was an ad hoc local test. The Nov 22 notarized ZIP above includes the welcome.
+- The daily build and the notarized beta use `org.crashpulse.p0.off`. The daily journal is `~/Library/Application Support/CrashPulse/cpu-history.json`.
 - Claude Design mirror of the panel (Events, Event detail, Live, with dark and severity switches): https://claude.ai/artifact/1VaNZyjmpBgS7zV1trhZqv. It is a hand-built mockup, private to the owner, not synced with code, and does not include the welcome.
 
 ## Build and verify from this checkout
@@ -43,7 +92,7 @@ xcodebuild -project CrashPulseP0.xcodeproj -scheme CrashPulse-Sandbox-Off \
 /usr/bin/codesign --verify --strict .build/onboarding-xcode/Build/Products/Release/CrashPulseOff.app
 ```
 
-`--render-ui` uses built-in samples by default. To render existing records, pass a scratch copy of the history directory as its second argument. To test the actual Release window, use `open .build/onboarding-xcode/Build/Products/Release/CrashPulseOff.app` in the test login. If replacing an active instance, quit it normally first so the journal flushes. To rebuild the ZIP from current source, run `Scripts/prepare-beta.zsh` with a new output directory. [README](CrashPulseP0/README.md#prepare-a-direct-download-beta) has the Developer ID and notarization commands.
+`--render-ui` uses built-in samples by default. To render existing records, pass a scratch copy of the history directory as its second argument. To test the actual Release window, use `open .build/onboarding-xcode/Build/Products/Release/CrashPulseOff.app` in the test login. If replacing an active instance, quit it normally first so the journal flushes. For a distribution ZIP, follow [Publish a new direct-download build](#publish-a-new-direct-download-build).
 
 ## Source map
 
@@ -72,8 +121,6 @@ xcodebuild -project CrashPulseP0.xcodeproj -scheme CrashPulse-Sandbox-Off \
 9. First-launch welcome: a 440×480 window with a transparent title bar and three pages. 1, what CrashPulse does, with the signature trace. 2, what it watches (sample interval, 30-second rule, explanations) plus the Mac's live CPU from `MonitorModel.activity`. 3, where it lives, with a menu bar and panel sketch and a note that the event list can start empty. Show Me closes the window and opens the real panel. It appears only on a true first launch of the Sandbox Off build: no `welcomeCompleted` default and no history journal. Existing users with a journal are marked done silently, and closing the window any way marks it seen. Settings has Show Welcome…, and launching with `-showWelcome YES` forces it. Verified: light and dark renders of all three pages (`--render-ui` scenes `8-welcome-*`); launch probes with an isolated history directory for fresh install (shown), existing journal (hidden), already seen (hidden) and forced (shown); a 440×480 window frame; 52 unit tests (the test target does not compile the app or view files). Not yet verified by clicking through a real window; see Next task.
 
 ## Other open work
-
-Before outside beta distribution, provide a Developer ID Application identity and a `notarytool` Keychain profile, then download and smoke-test the notarized ZIP on another Mac. This machine had no usable Developer ID Application identity during the local package check.
 
 1. **Investigate the earlier CrashPulseOff spike if it recurs.** The Nov 21 journal attributed 0.729 Wh of CPU energy to a 7m 50s event with a 99.8% peak. The macOS report put the sampled hot interval on the main thread in AppKit and SwiftUI layout and rendering. An eight-minute old-Release replay with Live open and the app's own row expanded did not reproduce the sustained spike. The trigger remains unverified. Local evidence is in `CrashPulseP0/.build/self-spike-investigation/`.
 2. **Redesign the Settings window** (`MonitorSettingsView`) to match the panel. It is still a plain grouped form with a paragraph of explanation. Apply the AGENTS.md rules and add it to `UIPreviewRenderer`.
