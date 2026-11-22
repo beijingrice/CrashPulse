@@ -11,7 +11,7 @@
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="CrashPulse">
   <meta property="og:title" content="Privacy Policy: CrashPulse">
-  <meta property="og:description" content="What the CrashPulse app, this website and purchases collect, and what they don&#x27;t.">
+  <meta property="og:description" content="What the CrashPulse app, this website, support email and checkout collect.">
   <meta property="og:url" content="https://crashpulse.bettercam.xyz/privacy.html">
   <meta property="og:image" content="https://crashpulse.bettercam.xyz/assets/og.png">
   <meta property="og:image:width" content="1200">
@@ -43,19 +43,24 @@
         <p>CrashPulse works entirely on your Mac. It has no account, no analytics and no crash reporting, and it does not send anything over the network.</p>
         <ul>
           <li>To find busy apps, it reads process names, process IDs, app locations, CPU use, memory use and, on Apple silicon, CPU energy, using the same system interfaces as Activity Monitor.</li>
-          <li>It keeps a history of CPU events for the last seven days in <code>~/Library/Application Support/CrashPulse</code>. Settings are kept in the app's standard preferences.</li>
+          <li>It keeps a history of CPU events from the last seven days in <code>~/Library/Application Support/CrashPulse</code>.</li>
+          <li>Its settings, such as the sample interval and window positions, are kept separately in macOS preferences under <code>org.crashpulse.p0.off</code>.</li>
           <li>It does not read your files, documents, browsing history, keystrokes or screen, and it asks for no privacy permissions.</li>
           <li>If you export a report from Settings, the file can include process names, process IDs and app locations. It is saved where you choose and only leaves your Mac if you share it.</li>
         </ul>
-        <p>To delete everything CrashPulse has stored, quit the app and delete the folder above.</p>
+        <p>To remove what CrashPulse has stored, quit it, delete the folder above, and run <code>defaults delete org.crashpulse.p0.off</code> in Terminal to remove its settings.</p>
 
         <h2>This website</h2>
         <p>This website is a small set of static pages. The pages set no cookies, contain no analytics or advertising code, and load no fonts, scripts or images from other websites.</p>
+        <!-- site:privacy-logs -->
+        <!-- /site:privacy-logs -->
+        <!-- site:privacy-support -->
+        <!-- /site:privacy-support -->
 
-        <h2>Buying CrashPulse</h2>
-        <!-- site:privacy-purchases -->
-        <p>CrashPulse is not on sale yet, and this website does not take payments. When sales open, this section will explain who processes purchases and what information they receive.</p>
-        <!-- /site:privacy-purchases -->
+        <h2>Checkout</h2>
+        <!-- site:privacy-checkout -->
+        <p>CrashPulse is not on sale yet, and this website does not take payments. When sales open, checkout will be run by Creem (Armitage Labs OÜ, Estonia), which will resell CrashPulse as merchant of record and process the payment and billing details you enter under its <a href="https://www.creem.io/privacy">Privacy Notice</a>.</p>
+        <!-- /site:privacy-checkout -->
         <!-- site:privacy-contact -->
         <!-- /site:privacy-contact -->
       </div>

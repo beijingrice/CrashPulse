@@ -1,14 +1,19 @@
 #!/usr/bin/env python3
 """Checks public/ before it is copied to the web server.
 
-- public/ matches site.json (run configure.py if not)
-- every local link, image and stylesheet exists
-- only web files are in public/, no notes, scripts or config
-- no launch placeholders, unconfirmed business names or payment wording leak into the pages
-- nothing is loaded from another website
+Fails when:
+- site.json has a malformed value, or a Buy link without everything live checkout needs
+  (configure.live_problems: confirmed publisher, support email, price, chosen refund policy,
+  Creem Buyer Terms and Privacy Notice links, a valid Creem payment link)
+- public/ is out of date with site.json (run configure.py)
+- a local link, image or stylesheet is missing
+- public/ holds anything that is not a web file, such as notes, scripts or config
+- launch placeholders or unconfirmed business wording reach the pages
+- a page loads or links anything outside the site other than the configured checkout and
+  Creem's published terms and privacy notice
 
-It then lists the site.json values that payment provider approval still needs. Those do not
-fail the check, because the preview can go live without them.
+It then lists what Creem's approval checklist still needs. Those do not fail the check while
+there is no Buy link, because pre-sale and price-only review pages can go live without them.
 """
 
 import json
@@ -19,54 +24,56 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(ROOT))
+sys.dont_write_bytecode = True
+import configure  # noqa: E402
+
 PUBLIC = ROOT / "public"
 WEB_TYPES = {".html", ".css", ".png", ".webp", ".svg", ".ico", ".txt", ".xml"}
-# Words that must not reach visitors until the matching decision is made.
+# Words that must not reach visitors. A configured publisher or copyright holder is exempt.
 BLOCKED = [r"\bTODO\b", r"to be confirmed", r"\bpending\b", r"\bplaceholder\b", r"FastSpring", r"Alipay",
-           r"支付宝", r"¥", r"\bRMB\b", r"Ning Gan", r"lorem"]
+           r"支付宝", r"¥", r"\bRMB\b", r"Ning Gan", r"lorem", r"example\.(com|org)"]
 
 problems = []
 config = json.loads((ROOT / "site.json").read_text())
-origin = config["origin"].rstrip("/")
+problems += [f"site.json: {p}" for p in configure.shape_problems(config)]
+sales = config.get("sales") or {}
+if sales.get("checkoutUrl"):
+    problems += [f"live checkout blocked: {p}" for p in configure.live_problems(config)]
 
-if subprocess.run([sys.executable, "-I", str(ROOT / "configure.py"), "--check"]).returncode:
+if not problems and subprocess.run([sys.executable, "-I", str(ROOT / "configure.py"), "--check"]).returncode:
     problems.append("public/ is out of date with site.json; run configure.py")
 
 for path in sorted(PUBLIC.rglob("*")):
     if path.is_file() and (path.suffix.lower() not in WEB_TYPES or path.name.startswith(".")):
         problems.append(f"not a web file: {path.relative_to(ROOT)}")
 
-# A configured seller or merchant of record may appear on the pages.
-configured = " ".join(filter(None, [config.get("seller"), (config.get("merchantOfRecord") or {}).get("name")]))
-BLOCKED = [word for word in BLOCKED if not re.search(word, configured, re.I)]
-
-# Links the owner configured on purpose: checkout and the merchant of record's own policies.
-merchant_config = config.get("merchantOfRecord") or {}
-allowed_outside = {url for url in [(config.get("sales") or {}).get("checkoutUrl"),
-                                   merchant_config.get("termsUrl"), merchant_config.get("privacyUrl")] if url}
+configured_names = " ".join(filter(None, [(config.get("publisher") or {}).get("name"), config.get("copyrightHolder")]))
+blocked = [word for word in BLOCKED if not re.search(word, configured_names, re.I)]
+origin = str(config.get("origin", "")).rstrip("/")
+creem = config.get("creem") or {}
+allowed_outside = {url for url in [sales.get("checkoutUrl"), creem.get("buyerTermsUrl"), creem.get("privacyUrl")] if url}
+email = config.get("supportEmail")
 
 for page in sorted(PUBLIC.rglob("*.html")) + sorted(PUBLIC.rglob("*.css")):
     text = page.read_text()
     visible = re.sub(r"<!--.*?-->", "", text, flags=re.S)
-    for word in BLOCKED:
+    for word in blocked:
         if re.search(word, visible, re.I):
             problems.append(f"{page.name}: contains {word!r}")
     for ref in re.findall(r'(?:href|src|srcset)="([^"]+)"|url\(([^)]+)\)', text):
-        ref = next(r for r in ref if r).strip("'\"")
+        ref = next(r for r in ref if r).strip("'\"").replace("&amp;", "&")
         parsed = urlparse(ref)
-        if parsed.scheme == "mailto" or ref.startswith("#") or parsed.scheme == "data":
+        if parsed.scheme in ("mailto", "data") or ref.startswith("#"):
             continue
         if parsed.scheme or ref.startswith("//"):
             if not ref.startswith(origin + "/") and ref not in allowed_outside:
                 problems.append(f"{page.name}: loads or links outside the site: {ref}")
             continue
         base = PUBLIC if parsed.path.startswith("/") else page.parent
-        target = (base / parsed.path.lstrip("/")).resolve()
-        if parsed.path in ("", "./", "/"):
-            target = PUBLIC / "index.html"
+        target = PUBLIC / "index.html" if parsed.path in ("", "./", "/") else (base / parsed.path.lstrip("/")).resolve()
         if not target.exists():
             problems.append(f"{page.name}: missing {ref}")
-    email = config.get("supportEmail")
     for found in re.findall(r"[\w.+-]+@[\w-]+\.[\w.]+", visible):
         if found != email:
             problems.append(f"{page.name}: email address not from site.json: {found}")
@@ -78,20 +85,11 @@ for problem in problems:
     print(problem)
 print("public/ is ready to copy" if not problems else f"{len(problems)} problem(s)")
 
-# Payment provider approval (Creem, FastSpring and similar) needs more than a deployable site.
-sales = config.get("sales") or {}
-merchant = config.get("merchantOfRecord") or {}
-missing = [label for label, ok in [
-    ("support email shown on the site (supportEmail)", config.get("supportEmail")),
-    ("visible price (sales.price)", sales.get("price")),
-    ("refund window (refundDays)", config.get("refundDays")),
-    ("seller named in the terms and footer (seller)", config.get("seller")),
-    ("merchant of record named in terms and privacy (merchantOfRecord.name)", merchant.get("name")),
-] if not ok]
-if missing:
-    print("Not yet ready for payment approval. Still unset in site.json:")
-    for label in missing:
-        print(f"  - {label}")
-else:
-    print("site.json has every value payment approval asks for")
+gaps = configure.approval_gaps(config) if not sales.get("checkoutUrl") else []
+if gaps:
+    print("Not yet ready for Creem approval or live checkout. Still needed in site.json:")
+    for gap in gaps:
+        print(f"  - {gap}")
+elif not problems:
+    print("site.json has everything Creem approval and live checkout need")
 sys.exit(1 if problems else 0)

@@ -1,17 +1,23 @@
 {
   "origin": "https://crashpulse.bettercam.xyz",
   "release": "0.1.0 beta",
-  "seller": null,
+  "publisher": {
+    "name": null,
+    "confirmed": false
+  },
+  "copyrightHolder": null,
   "supportEmail": null,
-  "refundDays": null,
+  "refundPolicy": {
+    "mode": null,
+    "voluntaryWindowDays": null
+  },
+  "webServerLogs": null,
   "sales": {
     "price": null,
-    "checkoutUrl": null,
-    "checkoutNote": null
+    "checkoutUrl": null
   },
-  "merchantOfRecord": {
-    "name": null,
-    "termsUrl": null,
-    "privacyUrl": null
+  "creem": {
+    "buyerTermsUrl": "https://www.creem.io/buyer-terms",
+    "privacyUrl": "https://www.creem.io/privacy"
   }
 }
