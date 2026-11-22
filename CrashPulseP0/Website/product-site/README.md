@@ -49,7 +49,7 @@ Live checkout fails closed. `configure.py` refuses to write anything, and `check
 | --- | --- | --- |
 | `origin` | `https://crashpulse.bettercam.xyz` | Canonical URLs, share metadata, `robots.txt`, `sitemap.xml` |
 | `release` | `0.1.0 beta` | Pricing text. The requirements table and the hero also say `0.1.0 beta` in plain HTML, so update those lines with it. |
-| `publisher.name`, `publisher.confirmed` | `null`, `false` | The party that publishes CrashPulse, named in the Terms only when confirmed. Until then the Terms say "the publisher of CrashPulse". |
+| `publisher.name`, `publisher.confirmed` | `beijingrice`, `true` | The party that publishes CrashPulse, named in the Terms only when confirmed. Until then the Terms say "the publisher of CrashPulse". |
 | `copyrightHolder` | `null` | The copyright line in every footer. Separate from the publisher. Until set, footers say "© 2026 CrashPulse". |
 | `supportEmail` | `null` | Shown in every footer, under Pricing, in the Terms, in the Privacy Policy's support email and contact sections, and in the refund steps. When null, no contact is shown anywhere. |
 | `refundPolicy.mode`, `.voluntaryWindowDays` | `null`, `null` | `voluntary-window`: a voluntary full refund within N days on top of statutory rights. `statutory-only`: no refunds beyond what the law gives. Either way the page states statutory rights separately, points EU, EEA and UK buyers to the withdrawal rules in Creem's Buyer Terms, sends requests to support, and says Creem refunds approved requests to the original payment method through its system. Published only with `supportEmail`. |

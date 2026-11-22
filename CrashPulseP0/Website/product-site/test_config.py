@@ -84,8 +84,12 @@ scenario("draft (repository site.json)", lambda c: None, True, True,
          [("index.html", "Not on sale yet", True), NO_BUY, ("refunds.html", "not on sale yet", True)])
 scenario("review: price only", setter(("sales.price", "US$1.00")), True, True,
          [("index.html", "US$1.00", True), ("index.html", "Checkout is not open yet", True), ("index.html", "https://www.creem.io/buyer-terms", True), NO_BUY])
-scenario("live link with nothing else set", setter(("sales.checkoutUrl", "https://creem.io/payment/prod_TEST123")),
-         False, False, message="publisher.name is not set")
+scenario("live link with nothing else set", setter(
+    ("publisher", {"name": None, "confirmed": False}),
+    ("supportEmail", None),
+    ("refundPolicy", {"mode": None, "voluntaryWindowDays": None}),
+    ("sales", {"price": None, "checkoutUrl": "https://creem.io/payment/prod_TEST123"}),
+), False, False, message="publisher.name is not set")
 for field, value, message in [
     ("publisher.name", None, "publisher.name"),
     ("publisher.confirmed", False, "publisher.name"),
