@@ -1,12 +1,49 @@
 # CrashPulse handoff
 
-Last updated 2026-11-21. Read `AGENTS.md` first for build commands, working rules and the UI design guide. This file says where the work stands and what to do next.
+Last updated 2026-11-22. Read this file before editing and follow [AGENTS.md](AGENTS.md) for the project rules and UI design guide.
 
-## Where things are
+## Next task: first-launch experience
 
-- Code: `CrashPulseP0/` in this repository, branch `master`. The continuous-timeline redesign landed in `70744b5`.
-- The owner runs the Release Sandbox Off build from `CrashPulseP0/.build/xcode/Build/Products/Release/CrashPulseOff.app` (bundle ID `org.crashpulse.p0.off`). It records to `~/Library/Application Support/CrashPulse/cpu-history.json`.
-- 52 unit tests pass. Both schemes build in Release.
+Build a first-launch interface for people opening CrashPulse for the first time. The current app has no onboarding state or welcome screen. `CrashPulseDelegate.applicationDidFinishLaunching` in `CrashPulseP0/CrashPulse/CrashPulseApp.swift` installs the menu bar item and starts monitoring. The app uses `LSUIElement`. `MonitorModel` reads `monitoringEnabled` and `monitoringInterval` from `UserDefaults`, with monitoring on and a 5-second interval by default. Opening the menu bar panel enters Events on the non-sandboxed build.
+
+- Start with `CrashPulseApp.swift` for launch and window coordination and `MonitorViews.swift` for SwiftUI, `PanelMessage`, design tokens, and preview rendering. Sketch the flow and explain when it appears, how users reach the menu bar panel, and what happens on relaunch. Show the owner the sketch before implementing a substantial UI redesign.
+- Explain what CrashPulse watches, where to find it, and that there may be no events yet. Preserve the menu bar workflow and the Events and Live tabs. Follow the current measurement copy for CPU energy and sampling coverage.
+- Verify first launch and relaunch in a separate macOS test account or machine with fresh preferences and history. Add a first-launch scene to `UIPreviewRenderer` for light and dark screenshots and use the actual Release app to verify launch behavior. The CLI `--history-dir` option applies to `--monitor` and `--history`. Keep the owner's preferences and history in place.
+
+## Current source and builds
+
+- App baseline is commit `74fad09` on `master`. It includes the attribution fix and beta packaging script. There is no first-launch implementation yet.
+- Latest verified Release app: `CrashPulseP0/.build/beta-candidate/CrashPulse.app`. Latest ZIP: `CrashPulseP0/.build/beta-candidate/CrashPulse-0.1.0-local-test.zip`. Both use Hardened Runtime and a local ad hoc signature. The unpacked ZIP was verified and used for the actual menu bar and four-Helper smoke tests on Nov 21.
+- The separate day-to-day app at `CrashPulseP0/.build/xcode/Build/Products/Release/CrashPulseOff.app` predates that attribution fix. Both artifacts use `org.crashpulse.p0.off`. The daily journal is `~/Library/Application Support/CrashPulse/cpu-history.json`.
+- The Nov 21 attribution build passed all 52 unit tests. Its Debug app is in `CrashPulseP0/.build/beta-debug/Build/Products/Debug/CrashPulseOff.app`, with light and dark renders in `CrashPulseP0/.build/ui-beta-attribution/`.
+
+## Build and verify from this checkout
+
+Run these on the Mac. The checked toolchain is Xcode 27.2, and the app targets macOS 14 and later. Use a dedicated derived-data directory for onboarding so the existing builds stay available.
+
+```sh
+cd /Users/rice/Documents/ChatGPT/crashPulse/CrashPulseP0
+
+xcodebuild -project CrashPulseP0.xcodeproj -scheme CrashPulse-Sandbox-Off \
+  -configuration Debug -destination 'platform=macOS,arch=arm64' \
+  -derivedDataPath .build/onboarding-xcode test
+
+# Build the app explicitly. The test target builds the model and XCTest bundle.
+xcodebuild -project CrashPulseP0.xcodeproj -scheme CrashPulse-Sandbox-Off \
+  -configuration Debug -destination 'platform=macOS,arch=arm64' \
+  -derivedDataPath .build/onboarding-xcode build
+.build/onboarding-xcode/Build/Products/Debug/CrashPulseOff.app/Contents/MacOS/CrashPulseOff \
+  --render-ui .build/ui-onboarding
+
+xcodebuild -project CrashPulseP0.xcodeproj -scheme CrashPulse-Sandbox-Off \
+  -configuration Release -destination 'platform=macOS,arch=arm64' \
+  -derivedDataPath .build/onboarding-xcode build
+/usr/bin/codesign --verify --strict .build/onboarding-xcode/Build/Products/Release/CrashPulseOff.app
+```
+
+`--render-ui` uses built-in samples by default. To render existing records, pass a scratch copy of the history directory as its second argument. To test the actual Release window, use `open .build/onboarding-xcode/Build/Products/Release/CrashPulseOff.app` in the test login. If replacing an active instance, quit it normally first so the journal flushes. To rebuild the ZIP from current source, run `Scripts/prepare-beta.zsh` with a new output directory. [README](CrashPulseP0/README.md#prepare-a-direct-download-beta) has the Developer ID and notarization commands.
+
+## Source map
 
 | File | Role |
 | --- | --- |
@@ -31,20 +68,20 @@ Last updated 2026-11-21. Read `AGENTS.md` first for build commands, working rule
 7. A hidden Live view stops grouping and charting while keeping its controls and background monitoring. In the same plugged-in Release process with 5-second sampling, 75-second samples measured 2.5 mW at startup with the panel closed, 56.8 mW in Live, and 4.9 mW after closing it. The previous closed-after-Live measurement was 56.6 mW. The new closed-state stack sample showed the sampling worker and did not capture Live grouping. Reopening Live showed the samples taken while hidden and retained its sort setting. Raw measurements and stack samples are in the local `.build/live-visibility-audit` directory.
 8. Event details and rows distinguish the recorded CPU trigger from a different likely contributor. The trace and peak follow the trigger and the CPU energy estimate follows the contributor. Verified the split in light and dark previews and in the real popover of the unpacked Hardened Runtime build. `Scripts/prepare-beta.zsh` packages the local Release and supports Developer ID signing and notarization. The local ZIP is in `.build/beta-candidate`.
 
-## Open work, in suggested order
+## Other open work
 
 Before outside beta distribution, provide a Developer ID Application identity and a `notarytool` Keychain profile, then download and smoke-test the notarized ZIP on another Mac. This machine had no usable Developer ID Application identity during the local package check.
 
-1. **Investigate the earlier CrashPulseOff spike if it recurs.** The Nov 21 journal attributed 0.729 Wh of CPU energy to a 7m 50s CrashPulseOff event with a 99.8% peak. Its cause remains unverified.
+1. **Investigate the earlier CrashPulseOff spike if it recurs.** The Nov 21 journal attributed 0.729 Wh of CPU energy to a 7m 50s event with a 99.8% peak. The macOS report put the sampled hot interval on the main thread in AppKit and SwiftUI layout and rendering. An eight-minute old-Release replay with Live open and the app's own row expanded did not reproduce the sustained spike. The trigger remains unverified. Local evidence is in `CrashPulseP0/.build/self-spike-investigation/`.
 2. **Redesign the Settings window** (`MonitorSettingsView`) to match the panel. It is still a plain grouped form with a paragraph of explanation. Apply the AGENTS.md rules and add it to `UIPreviewRenderer`.
 3. **System processes are invisible.** About 16% of processes (root and other-user daemons such as WindowServer, mds_stores, backupd) return `EPERM` for resource reads, so their spikes are never detected. The setuid `/bin/ps` can read them. Options: a low-frequency `ps` fallback for denied PIDs, or a privileged helper through `SMAppService`. Discuss the choice with the owner before building it.
 4. **The command line has no foreground context.** `HistoryCommand.monitor` never sets `snapshot.foregroundPID`, so events recorded through `--monitor` can never be rated "busy in the background". Either read the frontmost app there too, or document the gap.
 5. **Energy attribution.** CrashPulse uses `ri_energy_nj`, which excludes energy that daemons spend on an app's behalf. Consider also reading `ri_billed_energy` for a "billed" figure. It is Apple silicon only either way.
-6. **Threshold tuning.** After a warm baseline, the trigger can fall to 45% of one core, which may be noisy on many-core Macs. The owner's real history so far contains only test-fixture events, so collect a few days of real data before changing it.
+6. **Threshold tuning.** After a warm baseline, the trigger can fall to 45% of one core, which may be noisy on many-core Macs. Collect representative beta usage before changing it.
 7. **Optional: adaptive icon appearances.** The `.icns` has a single light appearance. macOS 26 can show dark, clear and tinted variants for icons made in Icon Composer (`.icon` in an asset catalog). Only do this if the owner asks. Reuse the existing SVG artwork, keep the light version identical, and keep `make-icon.zsh` working for older systems.
 
-## Before you finish a session
+## Handoff approval
 
-- Run the tests. For UI changes, render and look at the screenshots.
-- Commit with a clear message.
-- Update this file: move finished items into Recent work, add anything new you found, and change the date.
+- Read this file before making changes.
+- When the work is ready, tell the owner what changed, where the build is, what was actually verified, and what is still open. Include screenshots for UI work.
+- Wait for the owner's approval before updating this handoff. An explicit request to maintain the handoff authorizes that update.

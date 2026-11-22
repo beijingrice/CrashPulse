@@ -1,6 +1,6 @@
 # CrashPulse agent guide
 
-CrashPulse is a macOS menu bar app (SwiftUI + AppKit, macOS 14+) that records sustained CPU activity, names the app most likely responsible, and shows live CPU and CPU power per app. Everything lives in `CrashPulseP0/`. Read `CrashPulseP0/README.md` for the measurement rules and `handoff.md` for the current state of work.
+CrashPulse is a macOS menu bar app (SwiftUI + AppKit, macOS 14+) that records sustained CPU activity, names the app most likely responsible, and shows live CPU and CPU power per app. The app source lives in `CrashPulseP0/`. Read `CrashPulseP0/README.md` for the measurement rules.
 
 The owner usually writes in Chinese. Reply in Chinese. Keep code, comments, commit messages and in-app copy in English.
 
@@ -33,6 +33,8 @@ cp -R ~/Library/Application\ Support/CrashPulse /tmp/crashpulse-history-copy
 
 ## Working rules
 
+- Read `handoff.md` before making any repository changes.
+- When the work is ready, report the changes, build location, and verification to the owner first. Update `handoff.md` only after the owner approves the result or explicitly asks for a handoff update.
 - One agent edits this repository at a time. Check `git status` before you start and commit finished work with a clear message. Uncommitted changes from someone else stay in place unless the owner says otherwise.
 - The history file in `~/Library/Application Support/CrashPulse/` is the owner's real data. Use `--history-dir` with a scratch directory for experiments.
 - Do not add the Overview tab back. The owner removed it on purpose.
