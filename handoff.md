@@ -10,7 +10,9 @@ Last updated 2026-11-22. Read this file before editing and follow [AGENTS.md](AG
 - **Verified on the build Mac** — Developer ID Application signature with Hardened Runtime and a secure timestamp. After stapling the ticket to `CrashPulse.app`, the final ZIP was extracted into a separate directory. The extracted app passed strict signature verification for both architectures, `stapler validate`, and `syspolicy_check distribution`.
 - **SHA-256** — `ad6376ed2bcecdb97f219b302858255f607e19f23a4bdec74edad9e39a62a47b`.
 
-The remaining distribution check is a browser download on another Mac with Gatekeeper enabled. Extract the ZIP in Finder, move `CrashPulse.app` to Applications, and open it from Finder in a fresh test account. Check the welcome flow below, open Live and Events, and confirm events persist after relaunch. The ZIP has been verified locally and is still stored on the build Mac.
+- **Disk image** — [CrashPulse-0.1.0-beta.dmg](CrashPulseP0/.build/dmg-20261122/CrashPulse-0.1.0-beta.dmg), with a copy at `~/Desktop/CrashPulse-0.1.0-beta.dmg`. It holds the same stapled app taken from the final ZIP, laid out as a drag-to-Applications window with the `Design/DMGBackground.svg` background and the app icon as the volume icon. The image is Developer ID signed, notarized (`Accepted`, submission `271fbdf9-b855-45b8-870f-e14ed3a30a5e`) and stapled. `spctl -t open` reports `Notarized Developer ID`, `hdiutil verify` passes, and the mounted app passed strict signature verification and `stapler validate`. SHA-256 `ee342ffbba0fe03731cce3fe499ea2dbec33609d41a1d5c611dcce9fb5ce23cd`. A screenshot of the mounted window is in `.build/dmg-20261122/window.jpg`.
+
+The remaining distribution check is a browser download on another Mac with Gatekeeper enabled. Open the DMG (or extract the ZIP) in Finder, move `CrashPulse.app` to Applications, and open it from Finder in a fresh test account. Check the welcome flow below, open Live and Events, and confirm events persist after relaunch. The ZIP has been verified locally and is still stored on the build Mac.
 
 ## Publish a new direct-download build
 
@@ -48,6 +50,15 @@ The remaining distribution check is a browser download on another Mac with Gatek
    ```
 
    Record the final ZIP path, checksum, Apple submission ID and smoke-test result for the release.
+
+6. Package the stapled app as a disk image. Run this in a logged-in session, because Finder lays out the window. The first run asks to let the terminal control Finder. Eject any mounted `CrashPulse` volume first.
+
+   ```sh
+   Scripts/make-dmg.zsh "$release_dir/CrashPulse.app" "$release_dir/CrashPulse-$version-beta.dmg" \
+     'Developer ID Application: Ning Gan (QHSG8V3GKU)' crashpulse-notary
+   ```
+
+   The script stages the app with an Applications link, renders the background at 1x and 2x into one TIFF, sets the icon positions (app at 170,190 and Applications at 470,190 in a 640×400 window), converts to a compressed ULFO image, then signs, notarizes and staples it. Apple's response lands next to the DMG as `-notarization.json`. Without the last two arguments it builds an unsigned image for layout checks. To change the look, edit `Design/DMGBackground.svg` and keep the icon centers in step with the script.
 
 If the script stops after submission, use the submission ID from `notarization.json` or find it with `xcrun notarytool history --keychain-profile crashpulse-notary`. Check its status with `xcrun notarytool info SUBMISSION_ID --keychain-profile crashpulse-notary`. For an `Invalid` result, get the issue details with `xcrun notarytool log SUBMISSION_ID --keychain-profile crashpulse-notary`. If Apple already accepted the staged app, resume with `xcrun stapler staple` and repack that same app using `ditto -c -k --sequesterRsrc --keepParent`. [Apple's notarization workflow](https://developer.apple.com/documentation/security/customizing-the-notarization-workflow)
 
@@ -115,6 +126,7 @@ xcodebuild -project CrashPulseP0.xcodeproj -scheme CrashPulse-Sandbox-Off \
 | `MonitorViews.swift` | All panel UI, the first-launch `WelcomeView`, Settings window, and the Debug-only `UIPreviewRenderer` |
 | `HistoryCommand.swift`, `Diagnostics.swift` | `--monitor`, `--history`, `--capture` command-line modes |
 | `Design/AppIcon.svg`, `Design/AppIcon-small.svg`, `Scripts/make-icon.zsh` | App icon sources and the script that builds `CrashPulse/AppIcon.icns` |
+| `Design/DMGBackground.svg`, `Scripts/make-dmg.zsh` | Disk image window background and the script that builds, signs and notarizes the DMG |
 
 ## Recent work
 
@@ -127,6 +139,7 @@ xcodebuild -project CrashPulseP0.xcodeproj -scheme CrashPulse-Sandbox-Off \
 7. A hidden Live view stops grouping and charting while keeping its controls and background monitoring. In the same plugged-in Release process with 5-second sampling, 75-second samples measured 2.5 mW at startup with the panel closed, 56.8 mW in Live, and 4.9 mW after closing it. The previous closed-after-Live measurement was 56.6 mW. The new closed-state stack sample showed the sampling worker and did not capture Live grouping. Reopening Live showed the samples taken while hidden and retained its sort setting. Raw measurements and stack samples are in the local `.build/live-visibility-audit` directory.
 8. Event details and rows distinguish the recorded CPU trigger from a different likely contributor. The trace and peak follow the trigger and the CPU energy estimate follows the contributor. Verified the split in light and dark previews and in the real popover of the unpacked Hardened Runtime build. `Scripts/prepare-beta.zsh` packages the local Release and supports Developer ID signing and notarization. The local ZIP is in `.build/beta-candidate`.
 9. First-launch welcome: a 440×480 window with a transparent title bar and three pages. 1, what CrashPulse does, with the signature trace. 2, what it watches (sample interval, 30-second rule, explanations) plus the Mac's live CPU from `MonitorModel.activity`. 3, where it lives, with a menu bar and panel sketch and a note that the event list can start empty. Show Me closes the window and opens the real panel. It appears only on a true first launch of the Sandbox Off build: no `welcomeCompleted` default and no history journal. Existing users with a journal are marked done silently, and closing the window any way marks it seen. Settings has Show Welcome…, and launching with `-showWelcome YES` forces it. Verified: light and dark renders of all three pages (`--render-ui` scenes `8-welcome-*`); launch probes with an isolated history directory for fresh install (shown), existing journal (hidden), already seen (hidden) and forced (shown); a 440×480 window frame; 52 unit tests (the test target does not compile the app or view files). Not yet verified by clicking through a real window; see Next task.
+10. Disk image for direct download. The window echoes the icon: a light gradient, two faint chart levels, and the CPU trace between the two icons as the drag arrow. Below are "Drag CrashPulse to Applications" and a note that the app lives in the menu bar. The app and Applications icons are 128 pt. In the owner's dark-mode session Finder drew the icon labels in dark text, which stays readable on the light background. Verified by mounting the final signed image and capturing the Finder window. The full background shows with nothing clipped, both icons sit on their marks, and the trace lines up between them. Not yet opened after a browser download on another Mac.
 
 ## Other open work
 
