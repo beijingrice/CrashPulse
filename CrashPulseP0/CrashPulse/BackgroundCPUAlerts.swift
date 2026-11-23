@@ -31,7 +31,28 @@ struct BackgroundCPUAlert: Sendable {
     }
 }
 
+/// When each app last raised a background alert. Cooldowns are kept apart from the event history,
+/// so clearing or pruning events never shortens one. Entries expire on their own.
+struct AlertCooldowns: Codable, Equatable {
+    private var lastAlertByApp: [String: Date] = [:]
+
+    func allows(_ appKey: String, at now: Date) -> Bool {
+        lastAlertByApp[appKey].map { now.timeIntervalSince($0) >= BackgroundCPUAlert.cooldown } ?? true
+    }
+
+    mutating func record(_ appKey: String, at date: Date) {
+        lastAlertByApp[appKey] = max(lastAlertByApp[appKey] ?? date, date)
+    }
+
+    func pruned(now: Date) -> AlertCooldowns {
+        var copy = self
+        copy.lastAlertByApp = lastAlertByApp.filter { now.timeIntervalSince($0.value) < BackgroundCPUAlert.cooldown }
+        return copy
+    }
+}
+
 /// Foreground evidence for the scan. Ticks share the CPU sampler's awake clock.
+/// `observedSince` is when the frontmost app became known, not when it last changed.
 struct BackgroundForeground: Equatable, Sendable {
     let pid: Int32
     let appKey: String
@@ -41,6 +62,36 @@ struct BackgroundForeground: Equatable, Sendable {
     func includesBackground(appKey candidate: String, pids: [Int32], from start: UInt64) -> Bool {
         candidate != appKey && !pids.contains(pid)
             && start >= observedSince && start >= graceUntil[candidate, default: 0]
+    }
+}
+
+/// Follows the frontmost app for background alerts. Switching apps keeps every other app's
+/// background window: only the app that comes forward stops counting, and the app that left
+/// waits out a short grace. An unknown frontmost app ends tracking, because nothing is known
+/// about what was in front meanwhile.
+struct ForegroundTracker {
+    private(set) var current: BackgroundForeground?
+    private var departed: [String: UInt64] = [:]
+    var graceTicks: UInt64 = 0
+    /// Departures stay listed past their grace, so a late sample that started inside it still sees it.
+    var retentionTicks: UInt64 = 0
+
+    mutating func update(_ identity: (pid: Int32, key: String)?, now: UInt64) {
+        guard let identity else { return reset() }
+        guard let previous = current else {
+            current = BackgroundForeground(pid: identity.pid, appKey: identity.key, observedSince: now)
+            return
+        }
+        guard previous.pid != identity.pid || previous.appKey != identity.key else { return }
+        departed = departed.filter { $0.value &+ retentionTicks > now }
+        departed[previous.appKey] = now + graceTicks
+        current = BackgroundForeground(pid: identity.pid, appKey: identity.key,
+                                       observedSince: previous.observedSince, graceUntil: departed)
+    }
+
+    mutating func reset() {
+        current = nil
+        departed.removeAll(keepingCapacity: true)
     }
 }
 

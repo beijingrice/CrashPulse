@@ -55,6 +55,7 @@ struct CPUHistoryStore {
         var schemaVersion = 4
         var events: [HighCPUEvent]
         var batteryDay: BatteryUsageDay? = nil
+        var alertCooldowns: AlertCooldowns? = nil
     }
 
     let directory: URL
@@ -119,13 +120,13 @@ struct CPUHistoryStore {
         try write(file, lock: lock)
     }
 
-    /// Removes every recorded event while no recorder owns the journal. Battery totals are kept.
+    /// Removes every recorded event while no recorder owns the journal. Battery totals and alert cooldowns are kept.
     func clearEvents(now: Date = Date()) throws {
         guard FileManager.default.fileExists(atPath: directory.path) else { return }
         let lock = try lockForWriting()
         let file = try recover(now: now, lock: lock)
         guard !file.events.isEmpty else { return }
-        try write(HistoryFile(events: [], batteryDay: file.batteryDay), lock: lock)
+        try write(HistoryFile(events: [], batteryDay: file.batteryDay, alertCooldowns: file.alertCooldowns), lock: lock)
     }
 
     fileprivate func bounded(_ events: [HighCPUEvent], now: Date) -> [HighCPUEvent] {
@@ -182,6 +183,7 @@ struct CPUHistoryStore {
     private struct StoredHistory: Decodable {
         let events: [Lossy<HighCPUEvent>]
         let batteryDay: Lossy<BatteryUsageDay>?
+        let alertCooldowns: Lossy<AlertCooldowns>?
     }
 
     /// `damaged` is true when the file or some of its records could not be decoded.
@@ -204,8 +206,11 @@ struct CPUHistoryStore {
         var events = stored.events.compactMap(\.value)
         for index in events.indices { events[index].migrateEnergyUnit() }
         let batteryDay = stored.batteryDay?.value
+        let cooldowns = stored.alertCooldowns?.value
         let damaged = events.count != stored.events.count || (stored.batteryDay != nil && batteryDay == nil)
-        return (HistoryFile(schemaVersion: version, events: events, batteryDay: batteryDay), damaged)
+            || (stored.alertCooldowns != nil && cooldowns == nil)
+        return (HistoryFile(schemaVersion: version, events: events, batteryDay: batteryDay, alertCooldowns: cooldowns),
+                damaged)
     }
 
     private func recover(now: Date, lock: WriterLock) throws -> HistoryFile {
@@ -217,7 +222,12 @@ struct CPUHistoryStore {
             return event
         }
         let day = BatteryUsageDay.current(before.batteryDay, at: now, calendar: calendar)
-        let recovered = HistoryFile(events: events, batteryDay: day)
+        // Journals written before cooldowns had their own field keep them only in event marks.
+        var cooldowns = before.alertCooldowns ?? AlertCooldowns()
+        for mark in before.events.compactMap(\.backgroundAlert) { cooldowns.record(mark.appKey, at: mark.at) }
+        cooldowns = cooldowns.pruned(now: now)
+        let recovered = HistoryFile(events: events, batteryDay: day,
+                                    alertCooldowns: cooldowns == AlertCooldowns() ? nil : cooldowns)
         if damaged || recovered != before { try write(recovered, lock: lock) }
         return recovered
     }
@@ -242,7 +252,7 @@ final class CPUHistoryRecorder {
     private var forensics: ForensicsTracker
     private var battery: BatteryUsageTracker
     private var events: [HighCPUEvent]
-    private var lastAlertByApp: [String: Date]
+    private var cooldowns: AlertCooldowns
     // Follow-up scans can still update an event after it ends. Cleared events must not come back.
     private var clearedIDs: Set<UUID> = []
     private var dirty = false
@@ -256,8 +266,7 @@ final class CPUHistoryRecorder {
         self.store = store
         self.lock = lock
         events = file.events
-        lastAlertByApp = Dictionary(file.events.compactMap { $0.backgroundAlert.map { ($0.appKey, $0.at) } },
-                                    uniquingKeysWith: max)
+        cooldowns = file.alertCooldowns ?? AlertCooldowns()
         tracker = HighCPUTracker(policy: store.policy, intervalSeconds: intervalSeconds)
         forensics = ForensicsTracker(intervalSeconds: intervalSeconds)
         battery = BatteryUsageTracker(day: file.batteryDay, intervalSeconds: intervalSeconds, calendar: store.calendar)
@@ -271,9 +280,7 @@ final class CPUHistoryRecorder {
         let now = snapshot.sampledAt
         let alertScan = foreground.map { foreground in
             HighCPUTracker.AlertScan(foreground: foreground) { id, appKey in
-                if let last = self.lastAlertByApp[appKey], now.timeIntervalSince(last) < BackgroundCPUAlert.cooldown {
-                    return false
-                }
+                guard self.cooldowns.allows(appKey, at: now) else { return false }
                 guard !self.events.contains(where: { $0.id == id && $0.ignoredAt != nil }) else { return false }
                 return claimedApps.insert(appKey).inserted
             }
@@ -281,11 +288,11 @@ final class CPUHistoryRecorder {
         let tracked = tracker.ingest(snapshot, alertScan: alertScan)
         let alerts = tracker.alerts
         if !alerts.isEmpty {
-            lastAlertByApp = lastAlertByApp.filter { now.timeIntervalSince($0.value) < BackgroundCPUAlert.cooldown }
             for event in tracked {
                 if let mark = event.backgroundAlert, claimedApps.contains(mark.appKey),
                    alerts.contains(where: { $0.eventID == event.id }) {
-                    lastAlertByApp[mark.appKey] = mark.at
+                    cooldowns.record(mark.appKey, at: mark.at)
+                    dirty = true
                 }
             }
         }
@@ -324,7 +331,7 @@ final class CPUHistoryRecorder {
     }
 
     /// Removes every finished event. An event that is still in progress keeps recording,
-    /// because it is not history yet. Alert cooldowns stay in memory so clearing cannot re-alert.
+    /// because it is not history yet. Alert cooldowns and battery totals are not history and stay.
     func clearFinishedEvents(now: Date = Date()) throws {
         guard let lock else { throw CPUHistoryStore.StoreError.eventNotFound }
         let finished = events.filter { $0.endReason != nil }.map(\.id)
@@ -377,7 +384,9 @@ final class CPUHistoryRecorder {
         if flush { needsImmediateWrite = true }
         let untilCheckpoint = nextCheckpoint?.timeIntervalSince(now) ?? 0
         guard needsImmediateWrite || untilCheckpoint <= 0 || untilCheckpoint > Self.checkpointSeconds else { return }
-        try store.write(.init(events: events, batteryDay: battery.day), lock: lock)
+        cooldowns = cooldowns.pruned(now: now)
+        try store.write(.init(events: events, batteryDay: battery.day,
+                              alertCooldowns: cooldowns == AlertCooldowns() ? nil : cooldowns), lock: lock)
         // A failed write keeps its urgency so the next scan can retry an event boundary.
         needsImmediateWrite = false
         dirty = false

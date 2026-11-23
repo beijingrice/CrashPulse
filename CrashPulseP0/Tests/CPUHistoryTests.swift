@@ -168,6 +168,109 @@ final class CPUHistoryTests: XCTestCase {
         XCTAssertEqual(recorder.report(now: at(75)).events.count, 1)
     }
 
+    func testSwitchingBetweenOtherAppsKeepsTheBackgroundWindow() throws {
+        let store = try fixtureStore()
+        let recorder = try store.startRecording(intervalSeconds: 5, now: at(0))
+        var tracker = ForegroundTracker(graceTicks: 10, retentionTicks: 60)
+        tracker.update((900, "/Applications/Mail.app"), now: 0)
+        var alerts: [BackgroundCPUAlert] = []
+        func scan(_ end: Int) throws {
+            alerts += try backgroundScan(recorder, from: end - 5, to: end, cpu: 300, foreground: tracker.current)
+        }
+        try scan(5)
+        // Switching between two other apps, even during a scan, keeps the fixture's window.
+        tracker.update((901, "/Applications/Notes.app"), now: 7)
+        XCTAssertEqual(tracker.current?.observedSince, 0)
+        try scan(10)
+        tracker.update((900, "/Applications/Mail.app"), now: 12)
+        try scan(15)
+        XCTAssertTrue(alerts.isEmpty)
+        try scan(20)
+        XCTAssertEqual(alerts.map(\.level), [.severe])
+    }
+
+    func testForegroundAppAndGraceStillStopTheBackgroundWindow() throws {
+        let store = try fixtureStore()
+        let recorder = try store.startRecording(intervalSeconds: 5, now: at(0))
+        var tracker = ForegroundTracker(graceTicks: 10, retentionTicks: 60)
+        tracker.update((900, "/Applications/Mail.app"), now: 0)
+        var alertTimes: [Int] = []
+        func scan(_ end: Int) throws {
+            let alerts = try backgroundScan(recorder, from: end - 5, to: end, cpu: 300, foreground: tracker.current)
+            if !alerts.isEmpty { alertTimes.append(end) }
+        }
+        for end in [5, 10, 15] { try scan(end) }
+        // The fixture comes forward, then leaves at 22 and waits out a grace until 32.
+        tracker.update((30, "/tmp/fixture"), now: 17)
+        try scan(20)
+        tracker.update((900, "/Applications/Mail.app"), now: 22)
+        XCTAssertEqual(tracker.current?.graceUntil["/tmp/fixture"], 32)
+        for end in stride(from: 25, through: 55, by: 5) { try scan(end) }
+        XCTAssertEqual(alertTimes, [55])
+
+        // An unknown frontmost app ends tracking, so the next one starts a fresh observation.
+        tracker.update(nil, now: 60)
+        XCTAssertNil(tracker.current)
+        tracker.update((900, "/Applications/Mail.app"), now: 61)
+        XCTAssertEqual(tracker.current?.observedSince, 61)
+        XCTAssertTrue(tracker.current?.graceUntil.isEmpty ?? false)
+    }
+
+    func testDepartedAppsStayListedThroughTheirRetention() {
+        var tracker = ForegroundTracker(graceTicks: 10, retentionTicks: 60)
+        tracker.update((1, "/Applications/A.app"), now: 0)
+        tracker.update((2, "/Applications/B.app"), now: 5)
+        tracker.update((3, "/Applications/C.app"), now: 70)
+        XCTAssertEqual(tracker.current?.graceUntil["/Applications/A.app"], 15)
+        tracker.update((1, "/Applications/A.app"), now: 80)
+        XCTAssertNil(tracker.current?.graceUntil["/Applications/A.app"])
+        XCTAssertEqual(tracker.current?.graceUntil["/Applications/C.app"], 90)
+    }
+
+    func testCooldownSurvivesClearingHistory() throws {
+        for clearWhileRecording in [true, false] {
+            let store = try fixtureStore()
+            let first = try store.startRecording(intervalSeconds: 5, now: at(0))
+            var alerts: [BackgroundCPUAlert] = []
+            for end in [5, 10, 15, 20] {
+                alerts += try backgroundScan(first, from: end - 5, to: end, cpu: 300, foreground: backgroundForeground)
+            }
+            XCTAssertEqual(alerts.count, 1)
+            XCTAssertTrue(try backgroundScan(first, from: 20, to: 25, cpu: 0, foreground: backgroundForeground).isEmpty)
+            if clearWhileRecording { try first.clearFinishedEvents(now: at(26)) }
+            try first.stop(now: at(27))
+            if !clearWhileRecording { try store.clearEvents(now: at(28)) }
+            XCTAssertTrue(try store.report(now: at(28)).events.isEmpty)
+
+            let next = try store.startRecording(intervalSeconds: 5, now: at(60))
+            for end in stride(from: 65, through: 120, by: 5) {
+                XCTAssertTrue(try backgroundScan(next, from: end - 5, to: end, cpu: 300,
+                                                 foreground: backgroundForeground, birth: 99).isEmpty)
+            }
+            try next.stop(now: at(121))
+        }
+    }
+
+    func testCooldownIsMigratedFromEventMarksInOlderJournals() throws {
+        let store = try fixtureStore()
+        let first = try store.startRecording(intervalSeconds: 5, now: at(0))
+        for end in [5, 10, 15, 20] {
+            _ = try backgroundScan(first, from: end - 5, to: end, cpu: 300, foreground: backgroundForeground)
+        }
+        try first.stop(now: at(21))
+        // Rewrite the journal the way the first alerts release stored it, with marks only on events.
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: store.fileURL)) as? [String: Any])
+        XCTAssertNotNil(json.removeValue(forKey: "alertCooldowns"))
+        try JSONSerialization.data(withJSONObject: json).write(to: store.fileURL)
+
+        let next = try store.startRecording(intervalSeconds: 5, now: at(60))
+        for end in stride(from: 65, through: 100, by: 5) {
+            XCTAssertTrue(try backgroundScan(next, from: end - 5, to: end, cpu: 300,
+                                             foreground: backgroundForeground, birth: 99).isEmpty)
+        }
+        try next.stop(now: at(101))
+    }
+
     func testFailedAlertWritePreventsDeliveryAndCanRecoverHistory() throws {
         let store = try fixtureStore()
         let recorder = try store.startRecording(intervalSeconds: 5, now: at(0))

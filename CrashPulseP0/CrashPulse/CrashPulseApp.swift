@@ -356,9 +356,7 @@ final class MonitorModel: ObservableObject {
     let notifications = BackgroundNotifications()
 
     private let worker: SamplingWorker
-    private var foreground: BackgroundForeground?
-    private var departedApps: [String: UInt64] = [:]
-    private var backgroundGraceTicks: UInt64 = 0
+    private var foregroundTracker = ForegroundTracker()
     private var task: Task<Void, Never>?
     private var wakeGeneration = 0
     private var snapshotInterval = 5
@@ -416,7 +414,9 @@ final class MonitorModel: ObservableObject {
             }
             let timebase = await worker.reset(interval: interval, recordHistory: recordHistory)
             if timebase.isValid {
-                self?.backgroundGraceTicks = UInt64(10_000_000_000 * Double(timebase.denominator) / Double(timebase.numerator))
+                let ticksPerSecond = 1_000_000_000 * Double(timebase.denominator) / Double(timebase.numerator)
+                self?.foregroundTracker.graceTicks = UInt64(10 * ticksPerSecond)
+                self?.foregroundTracker.retentionTicks = UInt64(60 * ticksPerSecond)
             }
             let clock = SuspendingClock()
             var deadline = clock.now
@@ -425,7 +425,7 @@ final class MonitorModel: ObservableObject {
                 let currentWake = wakeGeneration
                 let frontmost = NSWorkspace.shared.frontmostApplication
                 let result: SamplingWorker.Reading
-                if let before = foregroundForAlerts(frontmost) {
+                if foregroundForAlerts(frontmost) != nil {
                     let collected = await worker.collect(resetForWake: currentWake != previousWake,
                                                          foregroundPID: frontmost?.processIdentifier)
                     guard !Task.isCancelled else { break }
@@ -433,8 +433,9 @@ final class MonitorModel: ObservableObject {
                         deadline = clock.now
                         continue
                     }
+                    // A switch during the scan is fine: the app that left is still in its grace.
                     let after = foregroundForAlerts(NSWorkspace.shared.frontmostApplication)
-                    result = await worker.record(collected, background: before == after ? after : nil)
+                    result = await worker.record(collected, background: after)
                 } else {
                     result = await worker.collectAndRecord(resetForWake: currentWake != previousWake,
                                                            foregroundPID: frontmost?.processIdentifier)
@@ -480,29 +481,13 @@ final class MonitorModel: ObservableObject {
     }
 
     func foregroundChanged(_ identity: (pid: Int32, key: String)?) {
-        guard notifications.canEvaluate else {
-            foreground = nil
-            departedApps.removeAll(keepingCapacity: true)
-            return
-        }
-        let now = mach_absolute_time()
-        if let previous = foreground {
-            guard previous.pid != identity?.pid || previous.appKey != identity?.key else { return }
-            departedApps = departedApps.filter { $0.value > now }
-            departedApps[previous.appKey] = now + backgroundGraceTicks
-        }
-        foreground = identity.map {
-            BackgroundForeground(pid: $0.pid, appKey: $0.key, observedSince: now, graceUntil: departedApps)
-        }
+        guard notifications.canEvaluate else { return foregroundTracker.reset() }
+        foregroundTracker.update(identity, now: mach_absolute_time())
     }
 
     private func foregroundForAlerts(_ app: NSRunningApplication?) -> BackgroundForeground? {
-        guard notifications.canEvaluate else {
-            foreground = nil
-            return nil
-        }
         foregroundChanged(Self.foregroundIdentity(app))
-        return foreground
+        return foregroundTracker.current
     }
 
     #if DEBUG
