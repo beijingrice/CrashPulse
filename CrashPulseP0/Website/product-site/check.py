@@ -6,7 +6,7 @@ Fails when:
   (configure.live_problems: confirmed publisher, support email, price, chosen refund policy,
   Creem Buyer Terms and Privacy Notice links, a valid Creem payment link)
 - public/ is out of date with site.json (run configure.py)
-- a local link, image or stylesheet is missing
+- a local link, image, stylesheet or the configured download is missing
 - public/ holds anything that is not a web file, such as notes, scripts or config
 - launch placeholders or unconfirmed business wording reach the pages
 - a page loads or links anything outside the site other than the configured checkout and
@@ -29,7 +29,7 @@ sys.dont_write_bytecode = True
 import configure  # noqa: E402
 
 PUBLIC = ROOT / "public"
-WEB_TYPES = {".html", ".css", ".png", ".webp", ".svg", ".ico", ".txt", ".xml"}
+WEB_TYPES = {".html", ".css", ".png", ".webp", ".svg", ".ico", ".txt", ".xml", ".dmg"}
 # Words that must not reach visitors. A configured publisher or copyright holder is exempt.
 BLOCKED = [r"\bTODO\b", r"to be confirmed", r"\bpending\b", r"\bplaceholder\b", r"FastSpring", r"Alipay",
            r"支付宝", r"¥", r"\bRMB\b", r"Ning Gan", r"lorem", r"example\.(com|org)"]

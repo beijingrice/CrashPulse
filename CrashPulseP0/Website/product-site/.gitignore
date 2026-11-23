@@ -1,1 +1,3 @@
 __pycache__/
+# The free download is a release artifact. Copy it in before deploying; see README.
+public/assets/*.dmg

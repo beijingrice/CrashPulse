@@ -1,6 +1,7 @@
 {
   "origin": "https://crashpulse.bettercam.xyz",
-  "release": "0.1.0 beta",
+  "release": "0.1.1 beta",
+  "download": "assets/CrashPulse-0.1.1-beta.dmg",
   "publisher": {
     "name": "beijingrice",
     "confirmed": true

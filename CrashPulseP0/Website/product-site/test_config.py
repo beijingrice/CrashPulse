@@ -22,6 +22,7 @@ COMPLETE = {
     "supportEmail": "support@crashpulse-test.invalid",
     "refundPolicy": {"mode": "voluntary-window", "voluntaryWindowDays": 14},
     "sales": {"price": "US$1.00, one-time purchase", "checkoutUrl": "https://creem.io/payment/prod_TEST123"},
+    "download": None,
 }
 results = []
 
@@ -80,9 +81,19 @@ def complete(*pairs):
 
 
 NO_BUY = ("index.html", "Buy CrashPulse", False)
-scenario("draft (repository site.json)", lambda c: None, True, True,
-         [("index.html", "Not on sale yet", True), NO_BUY, ("refunds.html", "not on sale yet", True)])
-scenario("review: price only", setter(("sales.price", "US$1.00")), True, True,
+DOWNLOAD = 'href="assets/CrashPulse-0.1.1-beta.dmg" download>Download for Mac'
+scenario("draft (repository site.json): free download", lambda c: None, True, True,
+         [("index.html", DOWNLOAD, True), ("index.html", '<p class="price">Free</p>', True),
+          ("index.html", "Not on sale yet", False), NO_BUY, ("refunds.html", "not on sale yet", True)])
+scenario("pre-sale without a download", setter(("download", None)), True, True,
+         [("index.html", "Not on sale yet", True), ("index.html", 'href="#features">See what it does', True),
+          ("index.html", "Download", False), NO_BUY])
+scenario("download file missing from public/", setter(("download", "assets/CrashPulse-9.9.dmg")), True, False,
+         message="missing assets/CrashPulse-9.9.dmg")
+for value in ["https://example.net/CrashPulse.dmg", "../CrashPulse.dmg", "assets/CrashPulse.zip", "  "]:
+    scenario(f"invalid download = {value!r}", setter(("download", value)), False, False, message="download must be")
+scenario("download with a price", setter(("sales.price", "US$1.00")), False, False, message="cannot be combined")
+scenario("review: price only", setter(("sales.price", "US$1.00"), ("download", None)), True, True,
          [("index.html", "US$1.00", True), ("index.html", "Checkout is not open yet", True), ("index.html", "https://www.creem.io/buyer-terms", True), NO_BUY])
 scenario("live link with nothing else set", setter(
     ("publisher", {"name": None, "confirmed": False}),
@@ -139,7 +150,8 @@ scenario("complete live config, voluntary refund window", complete(), True, True
 scenario("complete live config, statutory-only refunds",
          complete(("refundPolicy", {"mode": "statutory-only", "voluntaryWindowDays": None})), True, True,
          [("refunds.html", "beyond those your consumer rights give you", True), ("refunds.html", "within 14 days", False)])
-scenario("complete live config with a payment link query", complete(("sales.checkoutUrl", "https://creem.io/payment/prod_TEST123?theme=dark")), True, True)
+scenario("complete live config with a payment link query",
+         complete(("sales.checkoutUrl", "https://creem.io/payment/prod_TEST123?theme=dark")), True, True)
 
 failed = 0
 for name, failures, output in results:

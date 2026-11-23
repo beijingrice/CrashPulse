@@ -2,15 +2,15 @@
 
 Internal notes. Only `public/` goes on the web server. Everything else in this directory is tooling and launch planning, and must not be copied to the web root.
 
-The site is separate from the Alipay experiment in `../shop.py`. It does not link to it, take payments or serve the DMG.
+The site is separate from the Alipay experiment in `../shop.py`. It does not link to it or take payments. While CrashPulse is free, it serves the notarized DMG from `public/assets/`.
 
 | Path | Role |
 | --- | --- |
 | `public/` | The web root: `index.html`, `privacy.html`, `terms.html`, `refunds.html`, `404.html`, `styles.css`, `robots.txt`, `sitemap.xml`, `assets/` |
-| `site.json` | Launch settings: domain, release, publisher, copyright holder, support email, refund policy, web server logs, price, Creem checkout link and Creem document links |
+| `site.json` | Launch settings: domain, release, free download, publisher, copyright holder, support email, refund policy, web server logs, price, Creem checkout link and Creem document links |
 | `configure.py` | Validates `site.json`, writes it into the marked blocks of the pages, and regenerates `robots.txt` and `sitemap.xml`. Refuses to write anything if a Buy link is configured without everything live checkout needs. |
 | `check.py` | Pre-deploy check. Fails on malformed settings, an incomplete live checkout, stale pages, missing files, non-web files, placeholders, or outside resources. Lists what Creem approval still needs. |
-| `test_config.py` | Runs configure and check against 33 site.json scenarios (pre-sale, price-only review, each missing, invalid or whitespace-only live field, complete live configs) in a temporary copy |
+| `test_config.py` | Runs configure and check against 40 site.json scenarios (free download, pre-sale, invalid or missing download, price-only review, each missing, invalid or whitespace-only live field, complete live configs) in a temporary copy |
 | `og-image.svg`, `make-og.zsh` | Share image source and the script that renders `public/assets/og.png` |
 | `../../Scripts/render-site-shots.zsh` | Regenerates the example screenshots in `public/assets/shots` |
 
@@ -30,7 +30,8 @@ Edit `site.json`, then run `python3 configure.py` and `python3 check.py` from th
 
 | State | site.json | What visitors see |
 | --- | --- | --- |
-| Pre-sale (now) | `sales.price` null | Pricing says "Not on sale yet". Terms and Privacy say Creem will run checkout when sales open. Refund Policy says there is nothing to refund yet. |
+| Free download (now) | `sales.price` null, `download` set | The hero and Pricing offer "Download for Mac" and say CrashPulse is free. Terms and Privacy say it is not on sale and Creem will run checkout when sales open. Refund Policy says there is nothing to refund yet. |
+| Pre-sale | `sales.price` null, `download` null | Pricing says "Not on sale yet" and the hero links to Features. Otherwise the same as above. |
 | Price-only review | `sales.price` set, `sales.checkoutUrl` null | The price, "Checkout is not open yet", and a note that Creem will run checkout under its Buyer Terms. For Creem's reviewers, who need to see pricing before the checkout link exists. |
 | Live | `sales.checkoutUrl` set | Buy CrashPulse button, Creem merchant-of-record disclosure and Buyer Terms link before payment (Creem Merchant Terms 3.7 and 3.8), and the full refund policy. |
 
@@ -48,7 +49,8 @@ Live checkout fails closed. `configure.py` refuses to write anything, and `check
 | Setting | Current value | Effect |
 | --- | --- | --- |
 | `origin` | `https://crashpulse.bettercam.xyz` | Canonical URLs, share metadata, `robots.txt`, `sitemap.xml` |
-| `release` | `0.1.0 beta` | Pricing text. The requirements table and the hero also say `0.1.0 beta` in plain HTML, so update those lines with it. |
+| `release` | `0.1.1 beta` | Hero and Pricing text. The requirements table also says `0.1.1 beta` in plain HTML, so update that line with it. |
+| `download` | `assets/CrashPulse-0.1.1-beta.dmg` | The free DMG behind the Download buttons, a path under `public/assets/` ending in `.dmg`. `configure.py` refuses it together with `sales.price` or `sales.checkoutUrl`, and `check.py` fails if the file is missing. The DMG is ignored by git, so copy the release DMG in before running the check or deploying. Set it to `null` before sales open. |
 | `publisher.name`, `publisher.confirmed` | `beijingrice`, `true` | The party that publishes CrashPulse, named in the Terms only when confirmed. Until then the Terms say "the publisher of CrashPulse". |
 | `copyrightHolder` | `null` | The copyright line in every footer. Separate from the publisher. Until set, footers say "© 2026 CrashPulse". |
 | `supportEmail` | `null` | Shown in every footer, under Pricing, in the Terms, in the Privacy Policy's support email and contact sections, and in the refund steps. When null, no contact is shown anywhere. |
@@ -60,7 +62,9 @@ Live checkout fails closed. `configure.py` refuses to write anything, and `check
 
 ## Launch status (2026-11-22)
 
-Done: product page, Privacy Policy, Terms of Service and Refund Policy in English, aligned with Creem's Merchant Terms V2.0, Buyer Terms (effective 16.11.2026) and Privacy Notice V2.0, example screenshots labeled as example data, Apple trademark notice, share image and metadata for the target domain, not-on-sale state. The verifiable release is CrashPulse 0.1.0 beta, a universal app for Apple silicon and Intel on macOS 14 or later, in a Developer ID signed and notarized DMG.
+Done (2026-11-23): free download state. The hero and Pricing link to the notarized `CrashPulse-0.1.1-beta.dmg` in `public/assets/`.
+
+Done (2026-11-22): product page, Privacy Policy, Terms of Service and Refund Policy in English, aligned with Creem's Merchant Terms V2.0, Buyer Terms (effective 16.11.2026) and Privacy Notice V2.0, example screenshots labeled as example data, Apple trademark notice, share image and metadata for the target domain, not-on-sale state. The release at that time was CrashPulse 0.1.0 beta, a universal app for Apple silicon and Intel on macOS 14 or later, in a Developer ID signed and notarized DMG.
 
 Not done: DNS, HTTPS and public access for `crashpulse.bettercam.xyz` are not configured or verified. Nothing has been deployed, and no Creem account settings were changed.
 

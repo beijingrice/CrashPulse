@@ -8,7 +8,8 @@ A value left null never shows up as a placeholder: the pages fall back to wordin
 true without it.
 
 The site has three sales states:
-  pre-sale  sales.price is null. Pricing says "Not on sale yet".
+  pre-sale  sales.price is null. With `download` set, the hero and Pricing offer the free DMG.
+            Without it, Pricing says "Not on sale yet".
   review    sales.price is set, sales.checkoutUrl is null. The price is visible for payment
             provider review and checkout is marked as not open.
   live      sales.checkoutUrl is set. Allowed only when every value in live_problems() is
@@ -48,6 +49,8 @@ CREEM_ENTITY = "Armitage Labs OÜ, Estonia"
 CREEM_PAYMENT_LINK = re.compile(r"/payment/prod_[A-Za-z0-9]+")
 CREEM_LINK_PARAMS = re.compile(r"discount_code|theme|metadata\[[A-Za-z0-9_]+\]")
 REFUND_MODES = ("voluntary-window", "statutory-only")
+# The free download is a DMG served from the site's own assets directory.
+DOWNLOAD_PATH = re.compile(r"assets/[A-Za-z0-9][A-Za-z0-9._-]*\.dmg")
 e = html.escape
 
 
@@ -98,6 +101,12 @@ def shape_problems(config):
         problems.append("refundPolicy.voluntaryWindowDays must be a whole number of days for voluntary-window")
     if mode != "voluntary-window" and days is not None:
         problems.append("refundPolicy.voluntaryWindowDays is only used with mode voluntary-window")
+    download = config.get("download")
+    if download is not None:
+        if not (isinstance(download, str) and DOWNLOAD_PATH.fullmatch(download)):
+            problems.append("download must be null or a path like assets/CrashPulse-1.0.dmg")
+        elif (config.get("sales") or {}).get("price") or (config.get("sales") or {}).get("checkoutUrl"):
+            problems.append("download offers CrashPulse for free, so it cannot be combined with sales.price or sales.checkoutUrl")
     logs = config.get("webServerLogs")
     if logs is not None and not (isinstance(logs, dict) and logs.get("recorded") and logs.get("retention")):
         problems.append("webServerLogs must be null or give both recorded and retention, as verified on the server")
@@ -209,8 +218,21 @@ def blocks(config, page):
                      '      <nav aria-label="Site">\n' + "\n".join(links) + "\n      </nav>" + trademarks)
 
     if page == "index.html":
+        download = config.get("download")
+        platforms = "for macOS 14 or later on Apple silicon and Intel Macs"
+        if download:
+            out["hero"] = (f'          <a class="button" href="{e(download)}" download>Download for Mac</a>\n'
+                           f'          <span class="fine">Free. Version {release}, {platforms}.</span>')
+        else:
+            out["hero"] = ('          <a class="button" href="#features">See what it does</a>\n'
+                           f'          <span class="fine">Version {release}, {platforms}.</span>')
         lines = []
-        if now == "pre-sale":
+        if now == "pre-sale" and download:
+            lines.append('        <p class="price">Free</p>')
+            lines.append(f'        <p class="prose">CrashPulse {release} is free to download, {platforms}. '
+                         'Signed and notarized by Apple.</p>')
+            lines.append(f'        <a class="button" href="{e(download)}" download>Download CrashPulse</a>')
+        elif now == "pre-sale":
             lines.append('        <p class="status">Not on sale yet</p>')
             lines.append(f'        <p class="prose">The current release is CrashPulse {release}, signed and notarized by Apple. '
                          'Pricing and a way to buy will appear here when sales open.</p>')
