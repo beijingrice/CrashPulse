@@ -42,7 +42,7 @@ Scripts/prepare-beta.zsh .build/beta-release \
   'Developer ID Application: YOUR NAME (TEAMID)' 'crashpulse-notary'
 ```
 
-Use a new output directory each time. Share the `-beta.zip` only after checking a download on another Mac with Gatekeeper enabled. Launch from Finder, confirm the menu bar item appears, open Live and Events, and check that records survive a relaunch. Follow [Apple's direct distribution packaging guide](https://developer.apple.com/documentation/xcode/packaging-mac-software-for-distribution) for the signing and notarization workflow.
+Use a new output directory each time. Share the notarized `CrashPulse-<version>.zip` or DMG only after checking a download on another Mac with Gatekeeper enabled. Launch from Finder, confirm the menu bar item appears, open Live and Events, and check that records survive a relaunch. Follow [Apple's direct distribution packaging guide](https://developer.apple.com/documentation/xcode/packaging-mac-software-for-distribution) for the signing and notarization workflow.
 
 Start beta testing on Apple silicon. CrashPulse identifies likely contributors to sustained CPU activity and estimates process CPU energy when readings are available. Some system processes are outside sampling coverage. Local history stays on the Mac. Diagnostic exports can include process names, identifiers, and executable paths. Ask testers to review an export before sharing it.
 

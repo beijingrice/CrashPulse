@@ -49,8 +49,8 @@ Live checkout fails closed. `configure.py` refuses to write anything, and `check
 | Setting | Current value | Effect |
 | --- | --- | --- |
 | `origin` | `https://crashpulse.bettercam.xyz` | Canonical URLs, share metadata, `robots.txt`, `sitemap.xml` |
-| `release` | `0.1.1 beta` | Hero and Pricing text. The requirements table also says `0.1.1 beta` in plain HTML, so update that line with it. |
-| `download` | `assets/CrashPulse-0.1.1-beta.dmg` | The free DMG behind the Download buttons, a path under `public/assets/` ending in `.dmg`. `configure.py` refuses it together with `sales.price` or `sales.checkoutUrl`, and `check.py` fails if the file is missing. The DMG is ignored by git, so copy the release DMG in before running the check or deploying. Set it to `null` before sales open. |
+| `release` | `0.1` | Hero and Pricing text. The requirements table also says `0.1` in plain HTML, so update that line with it. |
+| `download` | `assets/CrashPulse-0.1.dmg` | The free DMG behind the Download buttons, a path under `public/assets/` ending in `.dmg`. `configure.py` refuses it together with `sales.price` or `sales.checkoutUrl`, and `check.py` fails if the file is missing. The DMG is ignored by git, so copy the release DMG in before running the check or deploying. Set it to `null` before sales open. |
 | `publisher.name`, `publisher.confirmed` | `beijingrice`, `true` | The party that publishes CrashPulse, named in the Terms only when confirmed. Until then the Terms say "the publisher of CrashPulse". |
 | `copyrightHolder` | `null` | The copyright line in every footer. Separate from the publisher. Until set, footers say "© 2026 CrashPulse". |
 | `supportEmail` | `null` | Shown in every footer, under Pricing, in the Terms, in the Privacy Policy's support email and contact sections, and in the refund steps. When null, no contact is shown anywhere. |
@@ -62,7 +62,7 @@ Live checkout fails closed. `configure.py` refuses to write anything, and `check
 
 ## Launch status (2026-11-22)
 
-Done (2026-11-23): free download state. The hero and Pricing link to the notarized `CrashPulse-0.1.1-beta.dmg` in `public/assets/`.
+Done (2026-11-23): free download state. The hero and Pricing link to the notarized `CrashPulse-0.1.dmg` in `public/assets/`. The release is called 0.1, without a beta label.
 
 Done (2026-11-22): product page, Privacy Policy, Terms of Service and Refund Policy in English, aligned with Creem's Merchant Terms V2.0, Buyer Terms (effective 16.11.2026) and Privacy Notice V2.0, example screenshots labeled as example data, Apple trademark notice, share image and metadata for the target domain, not-on-sale state. The release at that time was CrashPulse 0.1.0 beta, a universal app for Apple silicon and Intel on macOS 14 or later, in a Developer ID signed and notarized DMG.
 
@@ -95,7 +95,7 @@ From the owner's screenshot, checked against the site on 2026-11-22.
 
 | Requirement | Status |
 | --- | --- |
-| Product is live | Waiting. The site is ready to deploy; DNS and HTTPS are not set up. The app is labeled 0.1.0 beta, which a reviewer may read as not ready for production. Decide whether the first paid release keeps the beta label. |
+| Product is live | Waiting. The site is ready to deploy; DNS and HTTPS are not set up. The app is now 0.1 without a beta label. |
 | Own custom domain | Ready once `crashpulse.bettercam.xyz` is live. Creem only allows sites disclosed to it (Merchant Terms 6.4.3), so list this domain in the account. |
 | No false information | Ready. No reviews, testimonials or user counts. Screenshots are labeled example data. |
 | Privacy Policy and Terms of Service | Pages exist, aligned with Creem, linked from every footer. They name the publisher and show contact details once `publisher` and `supportEmail` are set. |
@@ -118,7 +118,7 @@ From the owner's screenshot, checked against the site on 2026-11-22.
 7. **Governing law** for the Terms, which depends on where the publisher is based. Not included yet. Creem's own documents follow Estonian law.
 8. **Delivery method** after purchase, then describe it in the Terms.
 9. **Server logs**, once the server is set up: set `webServerLogs`.
-10. **Version for sale.** The site says 0.1.0 beta. Change it with the first paid release.
+10. **Version for sale.** The site says 0.1, a free release. Change it with the first paid release.
 11. **Chinese version.** Not started, waiting for the owner.
 
 Before applying to Creem: deploy the site, set items 1 to 5, run `configure.py` and `check.py`, and deploy again. Before going live: add the Creem payment link as `sales.checkoutUrl`, make a test purchase in Creem's test mode, then deploy.

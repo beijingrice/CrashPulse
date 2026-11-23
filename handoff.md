@@ -2,16 +2,16 @@
 
 Last updated 2026-11-23. Read this file before editing and follow [AGENTS.md](AGENTS.md) for the project rules and UI design guide.
 
-## Current free release: 0.1.1 beta (2026-11-23)
+## Current free release: 0.1 (2026-11-23)
 
-CrashPulse is now a free download. This build includes Clear History, background alert windows that survive app switches, and cooldowns stored apart from events (Recent work 11 and 12).
+CrashPulse is now a free download called 0.1, with no beta label. This build includes Clear History, background alert windows that survive app switches, and cooldowns stored apart from events (Recent work 11 and 12).
 
-- **App (executable)** — [CrashPulse.app](CrashPulseP0/.build/release-20261123/CrashPulse.app), stapled. The binary is `CrashPulse.app/Contents/MacOS/CrashPulseOff`. Version `0.1.1` (build `2`), bundle ID `org.crashpulse.p0.off`, `arm64` and `x86_64`, macOS 14 or later. Source: commit `7558de7` plus the version bump in the release commit that follows it. The stapled app is also zipped as `CrashPulse-0.1.1-beta.zip` in the same folder.
-- **DMG** — [CrashPulse-0.1.1-beta.dmg](CrashPulseP0/.build/release-20261123/CrashPulse-0.1.1-beta.dmg), 1,808,813 bytes, SHA-256 `a13e912edcb5dd6d7d06a3c07f9f8a813a7ff42eda6154782384d97449372e69`. Identical copies are at `~/Desktop/CrashPulse-0.1.1-beta.dmg` and `CrashPulseP0/Website/product-site/public/assets/CrashPulse-0.1.1-beta.dmg`, the file the website's Download buttons link to. All three are under git-ignored paths.
-- **Apple notarization** — app `Accepted`, submission `357689df-bd7b-4e02-8b15-a2565edcf008` (`notarization.json`); DMG `Accepted`, submission `5c698e31-63ad-45ac-b335-36ec16bee858` (`CrashPulse-0.1.1-beta-notarization.json`). Both are stapled.
+- **App (executable)** — [CrashPulse.app](CrashPulseP0/.build/release-0.1/CrashPulse.app), stapled. The binary is `CrashPulse.app/Contents/MacOS/CrashPulseOff`. Version `0.1` (build `3`), bundle ID `org.crashpulse.p0.off`, `arm64` and `x86_64`, macOS 14 or later. Built from the commit that records this release (on top of `a3ec09a`). The stapled app is also zipped as `CrashPulse-0.1.zip` in the same folder.
+- **DMG** — [CrashPulse-0.1.dmg](CrashPulseP0/.build/release-0.1/CrashPulse-0.1.dmg), 1,808,822 bytes, SHA-256 `95dafc4107ebc17e50b254816ca059bcdf9d7bebfd1f133563c1c961cdcbe3ad`. Identical copies are at `~/Desktop/CrashPulse-0.1.dmg` and `CrashPulseP0/Website/product-site/public/assets/CrashPulse-0.1.dmg`, the file the website's Download buttons link to. All three are under git-ignored paths.
+- **Apple notarization** — app `Accepted`, submission `33226d76-27af-4761-a2f5-fdac17290dce` (`notarization.json`); DMG `Accepted`, submission `3bda9a96-7af4-47c2-a7ac-54cb8ef86192` (`CrashPulse-0.1-notarization.json`). Both are stapled.
 - **Verified on the build Mac** — `spctl -t open` reports `Notarized Developer ID` for the DMG, `hdiutil verify` passes, and `stapler validate` passes for the DMG and the app. The mounted app passed strict signature verification for both architectures, `stapler validate`, `spctl` (`Notarized Developer ID`) and `syspolicy_check distribution`. The website served the DMG over a local preview with the same checksum.
 - **Not verified** — a browser download on another Mac with Gatekeeper, and the Finder window layout of this DMG (the script and background are unchanged from 0.1.0). The site is not deployed.
-- To mount the DMG, the old `/Volumes/CrashPulse` (the 0.1.0 DMG from the Desktop) was ejected. The 0.1.0 DMG file is untouched.
+- **Superseded 0.1.1 beta build** — built and notarized earlier the same day in `CrashPulseP0/.build/release-20261123/` and never distributed. Its Desktop and website copies were moved to the Trash.
 
 ## Previous notarized beta: 0.1.0 (superseded)
 
@@ -39,19 +39,19 @@ The remaining distribution check is a browser download on another Mac with Gatek
 4. From `CrashPulseP0/`, run the existing release script with a fresh output directory.
 
    ```sh
-   release_dir=".build/beta-$(date +%Y%m%d-%H%M%S)"
+   release_dir=".build/release-$(date +%Y%m%d-%H%M%S)"
    Scripts/prepare-beta.zsh "$release_dir" \
      'Developer ID Application: Ning Gan (QHSG8V3GKU)' crashpulse-notary
    ```
 
-   The script builds the non-sandboxed Release with Hardened Runtime, signs with a secure timestamp, and stages it as `CrashPulse.app`. It submits `notary-submission.zip` to Apple and waits for `Accepted` in `notarization.json`. It then staples the ticket to the app, validates it, and creates `CrashPulse-<version>-beta.zip` from the stapled app. Share the `-beta.zip` produced by that last step.
+   The script builds the non-sandboxed Release with Hardened Runtime, signs with a secure timestamp, and stages it as `CrashPulse.app`. It submits `notary-submission.zip` to Apple and waits for `Accepted` in `notarization.json`. It then staples the ticket to the app, validates it, and creates `CrashPulse-<version>.zip` from the stapled app. Share the ZIP or the DMG produced by the next step.
 
 5. Verify the final ZIP by extracting a fresh copy before the browser-download smoke test.
 
    ```sh
    version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
      "$release_dir/CrashPulse.app/Contents/Info.plist")
-   zip="$release_dir/CrashPulse-$version-beta.zip"
+   zip="$release_dir/CrashPulse-$version.zip"
    verification_dir=$(mktemp -d "${TMPDIR:-/tmp}/crashpulse-release.XXXXXXXX")
    ditto -x -k "$zip" "$verification_dir" &&
      codesign --verify --strict --all-architectures "$verification_dir/CrashPulse.app" &&
@@ -65,7 +65,7 @@ The remaining distribution check is a browser download on another Mac with Gatek
 6. Package the stapled app as a disk image. Run this in a logged-in session, because Finder lays out the window. The first run asks to let the terminal control Finder. Eject any mounted `CrashPulse` volume first.
 
    ```sh
-   Scripts/make-dmg.zsh "$release_dir/CrashPulse.app" "$release_dir/CrashPulse-$version-beta.dmg" \
+   Scripts/make-dmg.zsh "$release_dir/CrashPulse.app" "$release_dir/CrashPulse-$version.dmg" \
      'Developer ID Application: Ning Gan (QHSG8V3GKU)' crashpulse-notary
    ```
 
@@ -87,7 +87,7 @@ The first-launch welcome is implemented (see Recent work 9) but has only been ch
 ## Current source and builds
 
 - `master` contains the welcome window on top of `9bcc6d7`, then background CPU alerts (`5b43b83`), Clear History (`a48bce5`, see Recent work 11) and the alert window and cooldown changes (see Recent work 12). These commits are local and not pushed.
-- A Release with these changes is built at `CrashPulseP0/.build/xcode/Build/Products/Release/CrashPulseOff.app`. The distributable 0.1.1 build is in `CrashPulseP0/.build/release-20261123/` (see Current free release). On Nov 23 the owner was running `/Applications/CrashPulse.app`, which was not replaced or restarted.
+- A Release with these changes is built at `CrashPulseP0/.build/xcode/Build/Products/Release/CrashPulseOff.app`. The distributable 0.1 build is in `CrashPulseP0/.build/release-0.1/` (see Current free release). On Nov 23 the owner was running `/Applications/CrashPulse.app`, which was not replaced or restarted.
 - The owner's day-to-day app at `CrashPulseP0/.build/xcode/Build/Products/Release/CrashPulseOff.app` was rebuilt on Nov 22 from the welcome commit, so it includes the attribution fix and the welcome. It is running. It skipped the welcome because the owner already has history, and wrote `welcomeCompleted = 1`.
 - The Nov 21 ZIP in `CrashPulseP0/.build/beta-candidate/` was an ad hoc local test. The Nov 22 notarized ZIP above includes the welcome.
 - The daily build and the notarized beta use `org.crashpulse.p0.off`. The daily journal is `~/Library/Application Support/CrashPulse/cpu-history.json`.
@@ -156,7 +156,7 @@ xcodebuild -project CrashPulseP0.xcodeproj -scheme CrashPulse-Sandbox-Off \
 10. Disk image for direct download. The window echoes the icon: a light gradient, two faint chart levels, and the CPU trace between the two icons as the drag arrow. Below are "Drag CrashPulse to Applications" and a note that the app lives in the menu bar. The app and Applications icons are 128 pt. In the owner's dark-mode session Finder drew the icon labels in dark text, which stays readable on the light background. Verified by mounting the final signed image and capturing the Finder window. The full background shows with nothing clipped, both icons sit on their marks, and the trace lines up between them. Not yet opened after a browser download on another Mac.
 11. Clear History (`a48bce5`). A quiet "Clear History…" button (`Pulse.caption`, secondary, borderless) sits at the bottom of the Events list, on the same row as "Show ignored events". It appears only when at least one finished event exists. A confirmation dialog asks "Clear all recorded events?" with a destructive Clear History button and Cancel. Clearing goes through `SamplingWorker.clearHistory`. A running recorder uses `CPUHistoryRecorder.clearFinishedEvents`: it keeps an event still in progress, drops finished ones, and ignores late follow-up updates for them through `clearedIDs` so they cannot reappear. Without a recorder, `CPUHistoryStore.clearEvents` empties the journal under the writer lock. Battery totals and alert cooldowns are kept (see Recent work 12). After clearing, the panel leaves any open detail and shows the list or the empty state. Verified: 62 unit tests, including a new one that fails without the follow-up filter; Debug `--render-ui` in light and dark, with a new `1-events-ignored` scene (renders in `CrashPulseP0/.build/ui-clear-history/`); Release build and `codesign --verify --strict`. The owner approved the result. Not yet clicked through in a real popover, so the confirmation dialog inside `NSPopover` is unverified. Never test it against the owner's real history.
 12. Background alert window and cooldowns. The owner asked that switching apps no longer reset background timing, and that cooldowns and similar lifecycle state live apart from event history. `ForegroundTracker` in `BackgroundCPUAlerts.swift` now owns foreground state for `MonitorModel`. Switching between other apps, including during a scan, keeps every other app's background window. The app that comes forward stops counting, the app that leaves has a 10-second grace (departures stay listed for 60 seconds), and an unknown frontmost app ends tracking. `AlertCooldowns` is a separate `alertCooldowns` field in `cpu-history.json`, recorded on each alert and pruned after 15 minutes. Clear History, event retention and the 512-event cap no longer touch it. Journals from `5b43b83` that only have event marks are migrated on the next read. The owner chose to leave Ignore as a per-event action that does not mute an app. The alert rules are now in the README. Verified: 67 unit tests, including tests that fail if switching resets the window or if clearing drops cooldowns, and a Release build. Not verified with a real notification.
-13. Free 0.1.1 release and website download (2026-11-23). Version bumped to 0.1.1 (build 2), then signed, notarized and packaged as a DMG (see Current free release). The product site has a free download state: `site.json` now has `download: assets/CrashPulse-0.1.1-beta.dmg` and `release: 0.1.1 beta`. The hero shows "Download for Mac" with "Free. Version 0.1.1 beta, …" (a new `site:hero` block), and Pricing shows "Free" with a Download CrashPulse button. Terms, Privacy and Refunds still say CrashPulse is not on sale. `configure.py` rejects a download that is not `assets/*.dmg` or that is combined with a price or checkout link. `check.py` accepts `.dmg` files and fails if the download is missing. `test_config.py` has 40 passing scenarios. Checked WebKit renders of the hero and Pricing at desktop width in light and dark and at phone width in light.
+13. Free 0.1 release and website download (2026-11-23). The owner asked to drop the beta label, so the version is `0.1` (build 3). A 0.1.1 beta build made first was never distributed. `Scripts/prepare-beta.zsh` now names the notarized ZIP `CrashPulse-<version>.zip` without `-beta` (the script keeps its file name). The product site has a free download state: `site.json` has `download: assets/CrashPulse-0.1.dmg` and `release: 0.1`. The hero shows "Download for Mac" with "Free. Version 0.1, …" (a new `site:hero` block), and Pricing shows "Free" with a Download CrashPulse button. Terms, Privacy and Refunds still say CrashPulse is not on sale, and the Terms keep a general "Beta releases" paragraph. `configure.py` rejects a download that is not `assets/*.dmg` or that is combined with a price or checkout link. `check.py` accepts `.dmg` files and fails if the download is missing or a `.DS_Store` appears in `public/`. `test_config.py` has 40 passing scenarios. Checked WebKit renders of the hero and Pricing in light and dark at desktop width, and at phone width for the 0.1.1 text.
 
 ## Other open work
 

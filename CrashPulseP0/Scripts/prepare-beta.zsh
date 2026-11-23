@@ -59,7 +59,7 @@ else
     xcrun stapler staple "$app"
     xcrun stapler validate "$app"
     /usr/bin/codesign --verify --strict "$app"
-    archive="$output/CrashPulse-$version-beta.zip"
+    archive="$output/CrashPulse-$version.zip"
 fi
 
 /usr/bin/ditto -c -k --sequesterRsrc --keepParent "$app" "$archive"

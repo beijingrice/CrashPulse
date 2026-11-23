@@ -81,7 +81,7 @@ def complete(*pairs):
 
 
 NO_BUY = ("index.html", "Buy CrashPulse", False)
-DOWNLOAD = 'href="assets/CrashPulse-0.1.1-beta.dmg" download>Download for Mac'
+DOWNLOAD = 'href="assets/CrashPulse-0.1.dmg" download>Download for Mac'
 scenario("draft (repository site.json): free download", lambda c: None, True, True,
          [("index.html", DOWNLOAD, True), ("index.html", '<p class="price">Free</p>', True),
           ("index.html", "Not on sale yet", False), NO_BUY, ("refunds.html", "not on sale yet", True)])
