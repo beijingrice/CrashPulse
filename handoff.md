@@ -75,7 +75,20 @@ The remaining distribution check is a browser download on another Mac with Gatek
 
 If the script stops after submission, use the submission ID from `notarization.json` or find it with `xcrun notarytool history --keychain-profile crashpulse-notary`. Check its status with `xcrun notarytool info SUBMISSION_ID --keychain-profile crashpulse-notary`. For an `Invalid` result, get the issue details with `xcrun notarytool log SUBMISSION_ID --keychain-profile crashpulse-notary`. If Apple already accepted the staged app, resume with `xcrun stapler staple` and repack that same app using `ditto -c -k --sequesterRsrc --keepParent`. [Apple's notarization workflow](https://developer.apple.com/documentation/security/customizing-the-notarization-workflow)
 
-## Next task: finish verifying the welcome window
+## Next task: deploy the product site with the free 0.1 download
+
+The owner plans to have Codex deploy next. Everything to deploy is in `CrashPulseP0/Website/product-site/public/`. Follow the Deploy section of [the site README](CrashPulseP0/Website/product-site/README.md#deploy-when-dns-and-https-are-ready), with these points for this release:
+
+1. **Deploy from this Mac.** `public/assets/CrashPulse-0.1.dmg` is git-ignored (`product-site/.gitignore`), so a fresh clone does not have it. If it is missing, copy it from `CrashPulseP0/.build/release-0.1/CrashPulse-0.1.dmg` and confirm SHA-256 `95dafc4107ebc17e50b254816ca059bcdf9d7bebfd1f133563c1c961cdcbe3ad`. Never rebuild or re-sign it for the deploy.
+2. **Check before copying.** From `product-site/`, run `python3 configure.py`, `python3 check.py` (it must print `public/ is ready to copy`) and `python3 test_config.py` (40 scenarios). `check.py` fails on a `.DS_Store` in `public/`, which Finder creates when you browse the folder; delete it and run the check again.
+3. **Not set up yet:** DNS, HTTPS and the web server for `https://crashpulse.bettercam.xyz` (planned on a Hong Kong server). Confirm with the owner before changing DNS, server settings or certificates. The README has an nginx server block. Its `location /assets/ { expires 30d; }` is fine for the DMG because the file name carries the version. Use a new file name for every release, never overwrite `CrashPulse-0.1.dmg` in place.
+4. **Copy** the contents of `public/`, for example `rsync -av --delete public/ server:/srv/crashpulse-site/`. Check the destination path first, because `--delete` removes anything else there.
+5. **Verify over HTTPS:** the pages listed in the README; both Download buttons; `curl -sI https://crashpulse.bettercam.xyz/assets/CrashPulse-0.1.dmg` returns 200 with `Content-Length: 1808822` (nginx's default `mime.types` serves `.dmg` as `application/octet-stream`, which downloads correctly); and a downloaded copy has the SHA-256 above. Then on another Mac, download it in a browser, open it, drag CrashPulse to Applications and open it from Finder with Gatekeeper on. This is the remaining release check.
+6. **Git.** The release commits on `master` are local and not pushed. A deploy does not need a push. Push only with the owner's approval.
+
+After the deploy, record the URL, date, server path and verification results here.
+
+## Later task: finish verifying the welcome window
 
 The first-launch welcome is implemented (see Recent work 9) but has only been checked through renders and window-level launch probes. Before calling it done:
 
@@ -86,9 +99,9 @@ The first-launch welcome is implemented (see Recent work 9) but has only been ch
 
 ## Current source and builds
 
-- `master` contains the welcome window on top of `9bcc6d7`, then background CPU alerts (`5b43b83`), Clear History (`a48bce5`, see Recent work 11) and the alert window and cooldown changes (see Recent work 12). These commits are local and not pushed.
-- A Release with these changes is built at `CrashPulseP0/.build/xcode/Build/Products/Release/CrashPulseOff.app`. The distributable 0.1 build is in `CrashPulseP0/.build/release-0.1/` (see Current free release). On Nov 23 the owner was running `/Applications/CrashPulse.app`, which was not replaced or restarted.
-- The owner's day-to-day app at `CrashPulseP0/.build/xcode/Build/Products/Release/CrashPulseOff.app` was rebuilt on Nov 22 from the welcome commit, so it includes the attribution fix and the welcome. It is running. It skipped the welcome because the owner already has history, and wrote `welcomeCompleted = 1`.
+- `master` contains, on top of the welcome window (`9bcc6d7`): background CPU alerts (`5b43b83`), Clear History (`a48bce5`, Recent work 11), alert windows and separate cooldowns (`7558de7`, Recent work 12), the free download site and 0.1.1 build (`a3ec09a`), and the 0.1 release without the beta label (`22bf6e8`, Recent work 13). All of these are local and not pushed.
+- The distributable 0.1 build is in `CrashPulseP0/.build/release-0.1/` (see Current free release). A local Release build is also at `CrashPulseP0/.build/xcode/Build/Products/Release/CrashPulseOff.app`; it is still version 0.1.0 (build 1), built before the version bump.
+- `/Applications/CrashPulse.app` is still the 0.1.0 beta (build 1). No agent replaced it. Installing 0.1 there is up to the owner.
 - The Nov 21 ZIP in `CrashPulseP0/.build/beta-candidate/` was an ad hoc local test. The Nov 22 notarized ZIP above includes the welcome.
 - The daily build and the notarized beta use `org.crashpulse.p0.off`. The daily journal is `~/Library/Application Support/CrashPulse/cpu-history.json`.
 - Claude Design mirror of the panel (Events, Event detail, Live, with dark and severity switches): https://claude.ai/artifact/1VaNZyjmpBgS7zV1trhZqv. It is a hand-built mockup, private to the owner, not synced with code, and does not include the welcome.
